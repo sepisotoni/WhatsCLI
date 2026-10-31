@@ -1,0 +1,33 @@
+name: Full Go repository audit
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/full-repo-audit.yml"
+      - "go.mod"
+      - "go.sum"
+      - "**/*.go"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-repo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Full source tests
+        run: go test ./...
+      - name: Full source vet
+        run: go vet ./...
+      - name: Detect unreachable and unused code
+        run: |
+          go run golang.org/x/tools/cmd/deadcode@latest -test ./...
+      - name: Static analysis
+        run: |
+          go run honnef.co/go/tools/cmd/staticcheck@latest ./...
