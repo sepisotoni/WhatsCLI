@@ -1,0 +1,19 @@
+language: en-US
+tone_instructions: "Be concise, technical, and actionable. Cite precise code locations; avoid speculative style-only feedback."
+reviews:
+  profile: assertive
+  auto_review:
+    enabled: true
+    drafts: false
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        Scale review scope to risk. For trivial edits, inspect the diff and immediate dependencies.
+        For features or refactors, inspect callers, integration paths, tests and compatibility.
+        For auth, storage, concurrency, security or deployment, inspect wider impacts.
+        Identify genuinely dead code, unused symbols, duplicate logic and inconsistent naming.
+        Do not flag intended backwards compatibility without confirming references.
+    - path: "**/*.go"
+      instructions: "Check goroutine leaks, races, errors, context cancellation, authentication, sessions and naming conventions."
+    - path: "**/*.{js,ts,tsx,py,yml,yaml}"
+      instructions: "Check error handling, unused logic, resource safety, secrets, and integration tests."
