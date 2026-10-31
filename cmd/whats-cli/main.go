@@ -1,14 +1,22 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"sync"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"whatscli/internal/app"
+	"whatscli/internal/config"
 	"whatscli/internal/history"
+	"whatscli/internal/messaging"
+	"whatscli/internal/privatefs"
 )
 
 func main() {
@@ -23,24 +31,73 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	dbPath := flag.String("db", defaultDB, "path to the local SQLite history database")
+	stateDir := flag.String("state-dir", filepath.Dir(defaultDB), "private settings/session/history directory on this host")
+	dbPath := flag.String("db", "", "override history database path")
+	offline := flag.Bool("offline", false, "disable all WhatsApp network operations")
 	flag.Parse()
-
-	repo, err := history.Open(*dbPath)
+	if err := privatefs.EnsureDir(*stateDir); err != nil {
+		return err
+	}
+	settingsPath := filepath.Join(*stateDir, "settings.json")
+	settings, err := config.Load(settingsPath)
+	if err != nil {
+		return err
+	}
+	path := *dbPath
+	if path == "" {
+		path = filepath.Join(*stateDir, "history.db")
+	}
+	repo, err := history.Open(path)
 	if err != nil {
 		return err
 	}
 	defer repo.Close()
-
-	program := tea.NewProgram(app.New(repo), tea.WithAltScreen())
+	var client messaging.Client
+	if *offline {
+		client = &offlineClient{events: make(chan messaging.Event)}
+	} else {
+		client, err = messaging.New(filepath.Join(*stateDir, "session.db"))
+		if err != nil {
+			return err
+		}
+	}
+	runtime := app.NewRuntime(repo, client, settings.Accepted())
+	defer runtime.Close()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	options := []tea.ProgramOption{tea.WithAltScreen(), tea.WithContext(ctx)}
+	if settings.Mouse {
+		options = append(options, tea.WithMouseCellMotion())
+	}
+	program := tea.NewProgram(app.NewWithRuntime(runtime, settings, settingsPath), options...)
 	_, err = program.Run()
+	if errors.Is(err, tea.ErrProgramKilled) && ctx.Err() != nil {
+		return nil
+	}
 	return err
 }
 
 func defaultDatabasePath() (string, error) {
-	configDir, err := os.UserConfigDir()
+	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("locate user config directory: %w", err)
 	}
-	return filepath.Join(configDir, "whats-cli", "history.db"), nil
+	return filepath.Join(dir, "whats-cli", "history.db"), nil
+}
+
+type offlineClient struct {
+	events chan messaging.Event
+	once   sync.Once
+}
+
+func (c *offlineClient) Connect(context.Context) error  { return errors.New("offline mode is enabled") }
+func (c *offlineClient) Close() error                   { c.once.Do(func() { close(c.events) }); return nil }
+func (c *offlineClient) Logout(context.Context) error   { return errors.New("offline mode is enabled") }
+func (c *offlineClient) Events() <-chan messaging.Event { return c.events }
+func (c *offlineClient) NewMessageID() string           { return "" }
+func (c *offlineClient) SendText(context.Context, string, string, string) (history.IncomingEvent, error) {
+	return history.IncomingEvent{}, errors.New("offline mode is enabled")
+}
+func (c *offlineClient) SendFile(context.Context, string, string, string) (history.IncomingEvent, error) {
+	return history.IncomingEvent{}, errors.New("offline mode is enabled")
 }

@@ -23,3 +23,6 @@ bin/
 *.test
 coverage.out
 __pycache__/
+
+# Tooling
+.claude/
