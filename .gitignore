@@ -1,0 +1,25 @@
+# Secrets and runtime state
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.sqlite*-shm
+*.sqlite*-wal
+state/
+sessions/
+media/
+logs/
+*.log
+
+# Generated files and local tools
+*.b64.txt
+bin/
+.tools/
+/whats-cli
+*.test
+coverage.out
+__pycache__/
