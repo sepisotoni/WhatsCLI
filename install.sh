@@ -48,12 +48,15 @@ resolve_ref() {
             ref=$(printf '%s' "$response" | python3 -c '
 import json, re, sys
 releases = json.load(sys.stdin)
-pattern = re.compile(r"^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)-beta\.(?:0|[1-9][0-9]*)$")
+pattern = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-beta\.(0|[1-9][0-9]*)$")
+versions = []
 for release in releases:
     tag = release.get("tag_name", "")
-    if release.get("prerelease") and not release.get("draft") and pattern.fullmatch(tag):
-        print(tag)
-        break
+    match = pattern.fullmatch(tag)
+    if release.get("prerelease") and not release.get("draft") and match:
+        versions.append((tuple(map(int, match.groups())), tag))
+if versions:
+    print(max(versions)[1])
 ') || fail "Could not parse the beta release list."
             [ -n "$ref" ] || fail "No published beta releases were found."
         else

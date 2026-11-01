@@ -56,7 +56,7 @@ set -eu
 [ "${FAIL_RELEASE_LOOKUP:-}" != 1 ] || exit 1
 case "$*" in
   *'releases?per_page=100'*)
-    printf '[{"tag_name":"v0.5.0-beta.1","prerelease":true,"draft":false},{"tag_name":"v0.4.0","prerelease":false,"draft":false}]\\n'
+    printf '[{"tag_name":"v0.5.0-beta.9","prerelease":true,"draft":false},{"tag_name":"v0.4.0","prerelease":false,"draft":false},{"tag_name":"v0.5.0-beta.10","prerelease":true,"draft":false},{"tag_name":"v0.5.0-beta.2","prerelease":true,"draft":false}]\\n'
     ;;
   *) printf '{"tag_name":"v0.4.0"}\\n' ;;
 esac
@@ -97,7 +97,7 @@ esac
     def test_fresh_beta_install_is_explicit_opt_in(self):
         result = self.run_installer("--beta")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("v0.5.0-beta.1", result.stdout)
+        self.assertIn("v0.5.0-beta.10", result.stdout)
         self.assertTrue(os.access(Path(self.env["WHATSCLI_DIR"]) / "bin/whatscli", os.X_OK))
 
     def test_existing_checkout_is_never_overwritten(self):
@@ -223,7 +223,7 @@ esac
         _, binary = self.update_checkout()
         result = self.run_installer("--beta", "--update")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("v0.5.0-beta.1", result.stdout)
+        self.assertIn("v0.5.0-beta.10", result.stdout)
         self.assertNotEqual(binary.read_text(), self.old_binary)
 
     def test_invalid_release_ref_is_rejected(self):
