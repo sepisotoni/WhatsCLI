@@ -173,10 +173,11 @@ type Model struct {
 	sendCancel                         context.CancelFunc
 	notice                             string
 	noticeErr                          bool
+	noticeScreen                       screen
+	noticeUntil                        time.Time
 	scroll                             int
 	consentDragging                    bool
 	ctrlCAt                            time.Time
-	ctrlCNoticeUntil                   time.Time
 	fullscreen                         bool
 	search, newChat, hover             string
 	searching, demo                    bool
@@ -491,7 +492,13 @@ func (m Model) photoFor(chat string) *ui.Photo {
 	return nil
 }
 
-func (m *Model) setNotice(text string, isErr bool) { m.notice, m.noticeErr = text, isErr }
+func (m *Model) setNotice(text string, isErr bool) {
+	m.notice, m.noticeErr, m.noticeScreen = text, isErr, m.active
+	m.noticeUntil = time.Time{}
+	if text != "" {
+		m.noticeUntil = time.Now().Add(5 * time.Second)
+	}
+}
 
 func (m *Model) trackPairing() {
 	if m.active == pairingScreen && !m.connection.Online {
@@ -533,11 +540,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case pulseMsg:
 		m.now = time.Time(msg)
-		if !m.ctrlCNoticeUntil.IsZero() && !m.now.Before(m.ctrlCNoticeUntil) {
-			if m.notice == "Press Ctrl+C again within 3 seconds to quit." {
-				m.setNotice("", false)
-			}
-			m.ctrlCNoticeUntil = time.Time{}
+		if !m.noticeUntil.IsZero() && !m.now.Before(m.noticeUntil) {
+			m.setNotice("", false)
 		}
 		if !m.settings.ReducedMotion {
 			m.frame = (m.frame + 1) % 10
@@ -601,10 +605,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.web = msg.srv
 		host, _ := os.Hostname()
 		m.webNote = msg.srv.URL
-		if msg.openErr == nil {
-			m.webNote += " · opened in browser"
-		} else {
-			m.webNote += " · could not launch browser: " + msg.openErr.Error()
+		if msg.openErr != nil {
+			m.setNotice("Could not open a browser automatically: "+msg.openErr.Error(), true)
 		}
 		m.webNote += fmt.Sprintf(" · over SSH: ssh -L %d:127.0.0.1:%d %s@%s", msg.srv.Port, msg.srv.Port, os.Getenv("USER"), host)
 	case savedMsg:

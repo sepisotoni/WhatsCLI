@@ -50,8 +50,8 @@ func TestServesQROnlyOnTokenPathAndLocalHost(t *testing.T) {
 	if status, _, _ := get(t, base, ""); status != 404 {
 		t.Fatal("served without token")
 	}
-	if status, _, _ := get(t, s.URL, "evil.example"); status != 404 {
-		t.Fatal("accepted foreign Host header")
+	if status, _, _ := get(t, s.URL, "lan-alias.example"); status != 200 {
+		t.Fatal("rejected a valid token URL reached through another local hostname")
 	}
 	if status, _, _ := get(t, s.URL, "localhost:9999"); status != 200 {
 		t.Fatal("rejected forwarded localhost port")

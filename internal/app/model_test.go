@@ -320,19 +320,42 @@ func TestComposerDoesNotTreatTextAsShortcuts(t *testing.T) {
 		t.Fatal("first Ctrl+C must request confirmation rather than quit")
 	}
 	m.now = time.Now()
-	m.ctrlCNoticeUntil = m.now.Add(time.Second)
-	next, _ := m.Update(pulseMsg(m.ctrlCNoticeUntil))
+	m.ctrlCAt = m.now
+	m.noticeUntil = m.ctrlCAt.Add(3 * time.Second)
+	next, _ := m.Update(pulseMsg(m.noticeUntil))
 	m = next.(Model)
 	if m.notice != "" {
 		t.Fatal("Ctrl+C prompt did not disappear after three seconds")
 	}
-	m.ctrlCAt = time.Now()
+	m.ctrlCAt = time.Now().Add(-4 * time.Second)
+	m, cmd = press(m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd != nil || m.notice == "" {
+		t.Fatal("Ctrl+C after the timeout should request a fresh confirmation")
+	}
 	m, cmd = press(m, tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd == nil {
 		t.Fatal("second Ctrl+C must quit")
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Fatal("not a quit command")
+	}
+}
+
+func TestNoticesAreScreenScopedAndExpire(t *testing.T) {
+	m := New(nil)
+	m.active = consentScreen
+	m.setNotice("Tick the box to accept the risks before continuing.", true)
+	if !strings.Contains(plain(m), "Tick the box") {
+		t.Fatal("notice was not shown on its originating screen")
+	}
+	m.active = pairingScreen
+	if strings.Contains(plain(m), "Tick the box") {
+		t.Fatal("consent notice leaked onto pairing screen")
+	}
+	next, _ := m.Update(pulseMsg(m.noticeUntil))
+	m = next.(Model)
+	if m.notice != "" {
+		t.Fatal("notice did not expire")
 	}
 }
 

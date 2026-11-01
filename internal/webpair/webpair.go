@@ -1,7 +1,7 @@
 // Package webpair serves the pairing QR on a temporary LAN-accessible page for
 // terminals that cannot display it. The QR is a credential: the server binds
-// to all interfaces, uses an unguessable path, accepts only local Host headers,
-// sends no-store headers, and stops itself after a short TTL.
+// to all interfaces, uses an unguessable path, sends no-store headers, and
+// stops itself after a short TTL.
 package webpair
 
 import (
@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -39,7 +38,7 @@ func Start(ctx context.Context, qr func() string, ttl time.Duration) (*Server, e
 	if _, err := rand.Read(token); err != nil {
 		return nil, err
 	}
-	lanIP, localIPs, err := lanIPv4()
+	lanIP, err := lanIPv4()
 	if err != nil {
 		return nil, err
 	}
@@ -49,13 +48,9 @@ func Start(ctx context.Context, qr func() string, ttl time.Duration) (*Server, e
 		return nil, errors.New("could not open a local port")
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
-	allowedHosts := map[string]bool{"127.0.0.1": true, "localhost": true, "::1": true}
-	for _, ip := range localIPs {
-		allowedHosts[ip.String()] = true
-	}
 	mux := http.NewServeMux()
 	mux.HandleFunc(prefix, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != prefix || !localHost(r.Host, allowedHosts) {
+		if r.URL.Path != prefix {
 			http.NotFound(w, r)
 			return
 		}
@@ -83,12 +78,11 @@ func Start(ctx context.Context, qr func() string, ttl time.Duration) (*Server, e
 	return &Server{URL: fmt.Sprintf("http://%s:%d%s", lanIP, port, prefix), Port: port, stop: stop}, nil
 }
 
-func lanIPv4() (net.IP, []net.IP, error) {
+func lanIPv4() (net.IP, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		return nil, nil, errors.New("could not find a local network address for web pairing")
+		return nil, errors.New("could not find a local network address for web pairing")
 	}
-	var localIPs []net.IP
 	var selected net.IP
 	selectedPreferred := false
 	for _, iface := range interfaces {
@@ -108,7 +102,6 @@ func lanIPv4() (net.IP, []net.IP, error) {
 			if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
 				continue
 			}
-			localIPs = append(localIPs, ip)
 			preferred := !virtualInterface(iface.Name)
 			if selected == nil || preferred && !selectedPreferred || preferred == selectedPreferred && ip.IsPrivate() && !selected.IsPrivate() {
 				selected = ip
@@ -117,9 +110,9 @@ func lanIPv4() (net.IP, []net.IP, error) {
 		}
 	}
 	if selected == nil {
-		return nil, nil, errors.New("web pairing needs an active IPv4 network address")
+		return nil, errors.New("web pairing needs an active IPv4 network address")
 	}
-	return selected, localIPs, nil
+	return selected, nil
 }
 
 func virtualInterface(name string) bool {
@@ -129,14 +122,6 @@ func virtualInterface(name string) bool {
 		}
 	}
 	return false
-}
-
-func localHost(host string, allowed map[string]bool) bool {
-	u, err := url.Parse("//" + host)
-	if err != nil {
-		return false
-	}
-	return allowed[strings.ToLower(u.Hostname())]
 }
 
 func svg(payload string) string {

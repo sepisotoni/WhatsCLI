@@ -95,7 +95,8 @@ func (m Model) draw(s *scene) {
 			s.overlay()
 		}
 	}
-	if m.notice != "" && (m.active == welcomeScreen || m.active == consentScreen || m.active == pairingScreen || m.isOverlay()) {
+	if m.notice != "" && m.active == m.noticeScreen &&
+		(m.active == welcomeScreen || m.active == consentScreen || m.active == pairingScreen || m.isOverlay()) {
 		s.toast()
 	}
 }

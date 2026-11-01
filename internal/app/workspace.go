@@ -952,7 +952,7 @@ func (s *scene) footer(r ui.Rect) {
 	rw := ui.StringWidth(right)
 	c.Text(r.Right()-rw-1, r.Y, right, rfg, ui.BG, true)
 	left, lfg := m.hints(), ui.Faint
-	if m.notice != "" {
+	if m.notice != "" && m.active == m.noticeScreen {
 		left, lfg = m.notice, ui.Accent
 		if m.noticeErr {
 			lfg = ui.Danger
