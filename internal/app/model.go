@@ -213,8 +213,8 @@ func New(repo history.Repository) Model {
 	return Model{
 		repo: repo, ctx: context.Background(), account: "local", width: 80, height: 24, active: welcomeScreen,
 		unread: map[string]int{}, avatars: map[string]*avatarEntry{},
-		state:     config.UIState{Read: map[string]time.Time{}, Archived: map[string]bool{}},
-		helpDelay: 2 * time.Minute, now: time.Now(),
+		state:        config.UIState{Read: map[string]time.Time{}, Archived: map[string]bool{}},
+		welcomeFocus: 1, helpDelay: 2 * time.Minute, now: time.Now(),
 	}
 }
 

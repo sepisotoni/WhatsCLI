@@ -45,14 +45,62 @@ func TestWelcomeMatchesReferenceAndOpensAgreement(t *testing.T) {
 	m := New(nil)
 	m.width, m.height = 100, 30
 	view := plain(m)
-	for _, text := range []string{"Welcome to WhatsCLI", ">_", "Your conversations. Your terminal.", "Get started", "Exit"} {
+	for _, text := range []string{"Welcome to WhatsCLI", ">_", "Your conversations. Your terminal.", "Continue", "Exit"} {
 		if !strings.Contains(view, text) {
 			t.Errorf("welcome screen missing %q", text)
 		}
 	}
+	if strings.Contains(view, "✉") {
+		t.Fatal("welcome wallpaper still contains envelope glyphs")
+	}
+	var exit, proceed *hit
+	s := &scene{m: &m}
+	m.draw(s)
+	for i := range s.hits {
+		switch s.hits[i].id {
+		case "welcome:exit":
+			exit = &s.hits[i]
+		case "welcome:start":
+			proceed = &s.hits[i]
+		}
+	}
+	if exit == nil || proceed == nil || exit.r.W != proceed.r.W || exit.r.H != proceed.r.H || exit.r.X >= proceed.r.X {
+		t.Fatalf("welcome buttons must be equal-sized with Exit on the left: exit=%+v continue=%+v", exit, proceed)
+	}
+	if strings.Contains(strings.Split(view, "\n")[0], "╭") || strings.Contains(view, "Get started") {
+		t.Fatal("welcome should use the compact centered-card design")
+	}
 	m, _ = press(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.active != consentScreen {
-		t.Fatal("Get started did not open the agreement screen")
+		t.Fatal("Continue did not open the agreement screen")
+	}
+}
+
+func TestWelcomeMouseButtonsRemainInteractive(t *testing.T) {
+	m := New(nil)
+	m.width, m.height = 100, 30
+	m.settings.Mouse = true
+	var proceed *hit
+	s := &scene{m: &m}
+	m.draw(s)
+	for i := range s.hits {
+		if s.hits[i].id == "welcome:start" {
+			proceed = &s.hits[i]
+			break
+		}
+	}
+	if proceed == nil {
+		t.Fatal("welcome continue button has no mouse target")
+	}
+	next, _ := m.Update(tea.MouseMsg{
+		X:      proceed.r.X + proceed.r.W/2,
+		Y:      proceed.r.Y + proceed.r.H/2,
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+	})
+	m = next.(Model)
+	if m.active != consentScreen {
+		t.Fatal("clicking Continue did not open agreement")
 	}
 }
 

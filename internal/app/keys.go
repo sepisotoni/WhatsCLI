@@ -134,7 +134,7 @@ func (m *Model) key(key tea.KeyMsg) tea.Cmd {
 		case "tab", "left", "right", "shift+tab":
 			m.welcomeFocus = 1 - m.welcomeFocus
 		case "enter":
-			if m.welcomeFocus == 1 {
+			if m.welcomeFocus == 0 {
 				return tea.Quit
 			}
 			m.active = consentScreen

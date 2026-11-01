@@ -6,7 +6,7 @@ func Doodle(c *Canvas, r Rect, ink Color) {
 	if c == nil {
 		return
 	}
-	glyphs := []rune("∘◌✦◇☆♪♡✎⌂☾✉✧⌘")
+	glyphs := []rune("∘◌✦◇☆♪♡✎⌂☾✧⌘")
 	r = r.Intersect(c.clip)
 	for y := r.Y; y < r.Bottom(); y++ {
 		for x := r.X; x < r.Right(); x++ {

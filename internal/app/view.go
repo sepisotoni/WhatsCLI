@@ -2,7 +2,6 @@ package app
 
 import (
 	"strconv"
-	"strings"
 
 	"whatscli/internal/ui"
 )
@@ -157,47 +156,76 @@ func (s *scene) welcome() {
 	m, c := s.m, s.c
 	W, H := m.width, m.height
 	frame := ui.R(0, 0, W, H)
-	c.Box(frame, ui.BorderHi, ui.Panel)
-	if m.settings.Wallpaper() {
-		ui.Doodle(c, frame.Inset(1), ui.Ink)
+	c.Fill(frame, ui.BG)
+	cardW := min(78, W-8)
+	if W < 52 {
+		cardW = W - 2
 	}
-	cx := W / 2
-	compact := H < 28 || W < 53
-	titleY := max(1, (H-12)/2)
-	if !compact && H >= 28 {
-		iconY := max(1, titleY-11)
-		s.chatIcon(cx-4, iconY)
-		dots := ui.Mix(ui.Accent, ui.Panel, .55)
-		lineW := min(9, max(3, (W-32)/2))
-		c.Text(max(2, cx-4-lineW-3), iconY+3, strings.Repeat("·", lineW), dots, ui.Panel, false)
-		c.Text(cx+5, iconY+3, strings.Repeat("·", lineW), dots, ui.Panel, false)
+	cardH := min(24, H-4)
+	if H < 22 {
+		cardH = H - 2
+	}
+	card := ui.R((W-cardW)/2, (H-cardH)/2, cardW, cardH)
+	c.Box(ui.R(card.X-1, card.Y-1, card.W+2, card.H+2), ui.Mix(ui.Accent, ui.Panel, .65), ui.BG)
+	c.Box(card, ui.BorderHi, ui.Panel)
+
+	micro := card.H < 11
+	compact := micro || card.H < 20 || card.W < 54
+	cx := card.X + card.W/2
+	iconY := card.Y + 3
+	titleY := card.Y + 9
+	buttonY := card.Y + 16
+	buttonH := 3
+	if micro {
+		titleY = card.Y + 1
+		buttonY = card.Bottom() - 2
+		buttonH = 1
+	} else if compact {
+		iconY = card.Y + 1
+		titleY = card.Y + 6
+		buttonY = card.Bottom() - 2
+		buttonH = 1
+	}
+	if !micro {
+		s.chatIcon(cx-5, iconY)
 	}
 	title := "Welcome to WhatsCLI"
 	tx := cx - ui.StringWidth(title)/2
 	c.Text(tx, titleY, "Welcome to ", ui.Hex(0xCDF7E3), ui.Panel, true)
 	c.Text(tx+11, titleY, "WhatsCLI", ui.Accent, ui.Panel, true)
 	sub := "Your conversations. Your terminal."
-	c.Text(cx-ui.StringWidth(sub)/2, titleY+4, sub, ui.Dim, ui.Panel, false)
-	c.HLine(cx-18, titleY+9, 36, '─', ui.Border)
-	by := titleY + 13
-	startW, exitW, gap := 27, 21, 3
-	startLabel := "Get started  →"
-	if compact {
-		by = min(H-2, titleY+5)
-		startW, exitW, gap = 16, 10, 2
-		startLabel = "Start →"
+	subY := titleY + 2
+	if micro {
+		sub = ""
+	} else if compact {
+		sub = "Your conversations. Your terminal."
+		if card.W < ui.StringWidth(sub)+4 {
+			sub = "Your terminal. Your chats."
+		}
+		subY = titleY + 1
+	} else {
+		c.HLine(card.X+8, titleY+4, card.W-16, '─', ui.Border)
 	}
-	groupW := startW + exitW + gap
-	start := ui.R(max(1, cx-groupW/2), by, startW, 3)
-	exit := ui.R(start.Right()+gap, by, exitW, 3)
-	if compact {
-		start.H, exit.H = 1, 1
+	if sub != "" {
+		c.Text(cx-ui.StringWidth(sub)/2, subY, ui.Truncate(sub, card.W-8, "…"), ui.Dim, ui.Panel, false)
 	}
-	s.primary(start, startLabel, "welcome:start", true)
-	s.outline(exit, "Exit", "welcome:exit", m.welcomeFocus == 1)
-	hint := "Enter · continue    Tab · choose    q · quit"
-	if H >= 12 {
-		c.Text(cx-ui.StringWidth(hint)/2, H-2, ui.Truncate(hint, W-4, "…"), ui.Faint, ui.Panel, false)
+
+	gap, buttonW := 4, min(22, (card.W-12)/2)
+	if compact {
+		gap, buttonW = 2, (card.W-6)/2
+	}
+	groupW := buttonW*2 + gap
+	left := ui.R(cx-groupW/2, buttonY, buttonW, buttonH)
+	right := ui.R(left.Right()+gap, buttonY, buttonW, buttonH)
+	s.outline(left, "Exit", "welcome:exit", m.welcomeFocus == 0)
+	continueLabel := "Continue  →"
+	if compact {
+		continueLabel = "Continue"
+	}
+	s.primary(right, continueLabel, "welcome:start", true)
+	if !compact {
+		hint := "Enter · continue    Tab · choose    q · quit"
+		c.Text(cx-ui.StringWidth(hint)/2, card.Bottom()-2, ui.Truncate(hint, card.W-6, "…"), ui.Faint, ui.Panel, false)
 	}
 }
 
@@ -572,9 +600,7 @@ func (s *scene) qrFull(q *ui.QRCode, qw, qh int) {
 // chatIcon draws the thick speech-bubble terminal icon from the mock-ups.
 func (s *scene) chatIcon(x, y int) {
 	c := s.c
-	icon := ui.R(x, y, 8, 4)
-	c.Box(icon, ui.Accent, ui.Hex(0x061C14))
-	c.Text(x+2, y+1, ">_", ui.Accent, ui.Hex(0x061C14), true)
-	c.Put(x+2, y+4, '╰', ui.Accent, ui.Panel, true)
-	c.Put(x+3, y+4, '╲', ui.Accent, ui.Panel, true)
+	icon := ui.R(x, y, 10, 5)
+	c.Box(icon, ui.Accent, ui.Panel)
+	c.Text(x+3, y+1, ">_", ui.Accent, ui.Panel, true)
 }
