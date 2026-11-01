@@ -127,8 +127,6 @@ def demo_flow(binary):
         s.resize(rows, cols)
         s.expect("Umbrella Devs")
         assert s.proc.poll() is None, "crashed while resizing"
-    s.resize(42, 130)
-    s.expect("Umbrella Devs")
     s.send(b"i")
     s.expect("Ctrl+J")
     s.send(b"PTY check \xf0\x9f\x91\x8c\r")

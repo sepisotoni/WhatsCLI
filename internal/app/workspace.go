@@ -29,18 +29,9 @@ func (m Model) geo() geo {
 	switch {
 	case W >= 100:
 		lw := min(44, max(32, W*30/100))
-		if W >= 144 {
-			lw = min(44, max(32, W*26/100))
-			ph = H - 2
-			g.rail = ui.R(1, 1, 11, ph)
-			g.list = ui.R(13, 1, lw, ph)
-			g.main = ui.R(13+lw, 1, W-14-lw, ph)
-			g.foot = ui.Rect{}
-		} else {
-			g.rail = ui.R(0, 0, 11, ph)
-			g.list = ui.R(12, 0, lw, ph)
-			g.main = ui.R(13+lw, 0, W-13-lw, ph)
-		}
+		g.rail = ui.R(0, 0, 11, ph)
+		g.list = ui.R(12, 0, lw, ph)
+		g.main = ui.R(12+lw+1, 0, W-12-lw-1, ph)
 	case W >= 72:
 		g.list = ui.R(0, 0, 30, ph)
 		g.main = ui.R(31, 0, W-31, ph)
@@ -55,7 +46,7 @@ func (m Model) geo() geo {
 }
 
 const (
-	itemPitch = 5
+	itemPitch = 4
 	listHead  = 7
 )
 
@@ -81,11 +72,7 @@ func (m Model) listCapacity() int {
 	if h == 0 {
 		h = m.height - 1
 	}
-	head := listHead
-	if m.width >= 144 {
-		head += 2
-	}
-	return max(1, (h-head-4)/itemPitch)
+	return max(1, (h-listHead-5)/itemPitch)
 }
 
 func (s *scene) workspace() {
@@ -100,9 +87,7 @@ func (s *scene) workspace() {
 	if g.main.W > 0 {
 		s.mainPane(g.main, g.list.W == 0)
 	}
-	if g.foot.W > 0 && g.foot.H > 0 {
-		s.footer(g.foot)
-	}
+	s.footer(g.foot)
 }
 
 // ---- navigation rail ----
@@ -116,14 +101,11 @@ func (s *scene) railButton(r ui.Rect, glyph, id string, active bool) {
 	if s.is(id) {
 		border, fill = ui.Accent, ui.PanelHi
 	}
-	if active || id == "rail:new" {
-		ui.DrawCircle(c, r.X, r.Y, ui.Accent, ui.Panel)
-		fg, fill = ui.AccentDark, ui.Accent
-	} else if s.is(id) {
-		c.Box(r, border, fill)
-	}
+	c.Box(r, border, fill)
 	if id == "rail:new" {
-		s.center(r, "+", fg, fill, true)
+		c.Put(r.X+1, r.Y+1, '◖', ui.Accent, fill, false)
+		c.Text(r.X+2, r.Y+1, " + ", ui.AccentDark, ui.Accent, true)
+		c.Put(r.X+5, r.Y+1, '◗', ui.Accent, fill, false)
 	} else {
 		s.center(r, glyph, fg, fill, true)
 	}
@@ -134,7 +116,7 @@ func (s *scene) rail(r ui.Rect) {
 	m, c := s.m, s.c
 	c.Box(r, ui.Border, ui.Panel)
 	bx := r.X + 1
-	y := r.Y + 1
+	y := r.Y + 3
 	total := 0
 	for _, n := range m.unread {
 		total += n
@@ -143,18 +125,16 @@ func (s *scene) rail(r ui.Rect) {
 		glyph, id string
 		active    bool
 	}{
-		{"◉", "rail:chats", m.listMode == modeAll || m.listMode == modeArchive},
+		{"✉", "rail:chats", m.listMode == modeAll || m.listMode == modeArchive},
 		{"+", "rail:new", false},
-		{"✎", "rail:compose", false},
-		{"♙", "rail:contacts", m.listMode == modeContacts},
-		{"◌", "rail:statuses", false},
-		{"⇩", "rail:files", false},
+		{"☻", "rail:contacts", m.listMode == modeContacts},
+		{"◔", "rail:unread", m.listMode == modeUnread},
 	}
 	for _, b := range buttons {
-		if y+4 > r.Bottom()-4 {
+		if y+3 > r.Bottom()-5 {
 			break
 		}
-		btn := ui.R(bx+1, y, 8, 4)
+		btn := ui.R(bx+1, y, 7, 3)
 		s.railButton(btn, b.glyph, b.id, b.active)
 		if b.id == "rail:chats" && total > 0 {
 			label := fmt.Sprint(total)
@@ -165,9 +145,9 @@ func (s *scene) rail(r ui.Rect) {
 			c.Fill(ui.R(btn.Right()-bw, y-1, bw, 1), ui.Accent)
 			c.Text(btn.Right()-bw+1, y-1, label, ui.AccentDark, ui.Accent, true)
 		}
-		y += 5
+		y += 4
 	}
-	s.railButton(ui.R(bx+1, r.Bottom()-5, 8, 4), "⚙", "rail:settings", m.active == settingsScreen)
+	s.railButton(ui.R(bx+1, r.Bottom()-4, 7, 3), "⚙", "rail:settings", m.active == settingsScreen)
 }
 
 // ---- chat list ----
@@ -286,7 +266,7 @@ func (s *scene) list(r ui.Rect) {
 		}
 	}
 	s.pill(r.X+3+ui.StringWidth(title)+1, r.Y+1, fmt.Sprint(count), ui.Accent, ui.PanelHi)
-	sr := ui.R(r.X+2, r.Y+4, r.W-4, 3)
+	sr := ui.R(r.X+2, r.Y+3, r.W-4, 3)
 	sb := ui.Border
 	if m.searching || s.is("search") {
 		sb = ui.Accent
@@ -307,11 +287,7 @@ func (s *scene) list(r ui.Rect) {
 	indices := m.visibleChats()
 	vis := m.listCapacity()
 	top := min(m.listTop, max(0, len(indices)-vis))
-	head := listHead
-	if m.width >= 144 {
-		head += 2
-	}
-	y0 := r.Y + head
+	y0 := r.Y + listHead
 	for slot := 0; slot < vis && top+slot < len(indices); slot++ {
 		idx := indices[top+slot]
 		y := y0 + slot*itemPitch
@@ -378,11 +354,7 @@ func (s *scene) chatRow(r ui.Rect, idx int, selected bool) {
 	if name == "" {
 		name = conv.ID
 	}
-	if strings.HasSuffix(conv.ID, "@g.us") {
-		ui.DrawGroupAvatar(c, r.X+2, r.Y, bg)
-	} else {
-		ui.DrawAvatar(c, r.X+2, r.Y, name, m.photoFor(conv.ID), bg)
-	}
+	ui.DrawAvatar(c, r.X+2, r.Y, name, m.photoFor(conv.ID), bg)
 	tx := r.X + 10
 	tw := r.W - 12
 	stamp := m.stamp(conv.UpdatedAt)
@@ -455,9 +427,6 @@ func (s *scene) mainPane(r ui.Rect, compact bool) {
 		return
 	}
 	ch := 5
-	if r.H >= 30 {
-		ch = 6
-	}
 	if r.H < 24 && m.replyTo == nil {
 		ch = 3
 	}
@@ -481,12 +450,8 @@ func (s *scene) header(r ui.Rect, compact bool) {
 		s.add(br, "head:back")
 		x += 6
 	}
-	if strings.HasSuffix(m.chatID, "@g.us") {
-		ui.DrawGroupAvatar(c, x, r.Y+1, ui.Panel)
-	} else {
-		ui.DrawAvatar(c, x, r.Y+1, m.chatTitle, m.photoFor(m.chatID), ui.Panel)
-	}
-	btnW := 8
+	ui.DrawAvatar(c, x, r.Y+1, m.chatTitle, m.photoFor(m.chatID), ui.Panel)
+	btnW := 7
 	bx := r.Right() - 2 - 3*btnW - 2
 	for i, b := range []struct{ glyph, id string }{{"▶", "head:video"}, {"✆", "head:call"}, {"⋮", "head:more"}} {
 		br := ui.R(bx+i*(btnW+1), r.Y+1, btnW, 3)
@@ -498,8 +463,8 @@ func (s *scene) header(r ui.Rect, compact bool) {
 		s.center(br, b.glyph, ui.Accent, ui.Panel, true)
 		s.add(br, b.id)
 	}
-	tw := bx - (x + 9) - 1
-	c.Text(x+9, r.Y+1, ui.Truncate(ui.SingleLine(m.chatTitle), tw, "…"), ui.Text, ui.Panel, true)
+	tw := bx - (x + 10) - 1
+	c.Text(x+10, r.Y+1, ui.Truncate(ui.SingleLine(m.chatTitle), tw, "…"), ui.Text, ui.Panel, true)
 	sub := m.subtitle()
 	status := ""
 	if m.demo {
@@ -510,14 +475,14 @@ func (s *scene) header(r ui.Rect, compact bool) {
 		status = "Offline"
 	}
 	if sub != "" && tw > 0 {
-		c.Text(x+7, r.Y+2, ui.Truncate(sub, tw, "…"), ui.Dim, ui.Panel, false)
+		c.Text(x+8, r.Y+2, ui.Truncate(sub, tw, "…"), ui.Dim, ui.Panel, false)
 		if w := ui.StringWidth(sub); w+3+ui.StringWidth(status) < tw {
-			c.Text(x+7+w, r.Y+2, " · ", ui.Dim, ui.Panel, false)
+			c.Text(x+8+w, r.Y+2, " · ", ui.Dim, ui.Panel, false)
 			fg := ui.Accent
 			if status == "Offline" {
 				fg = ui.Faint
 			}
-			c.Text(x+10+w, r.Y+2, status, fg, ui.Panel, true)
+			c.Text(x+11+w, r.Y+2, status, fg, ui.Panel, true)
 		}
 	}
 }
@@ -623,7 +588,7 @@ func (m Model) buildBubble(msg history.Message, iw int) bubble {
 	} else {
 		content = max(content, mw)
 	}
-	b.w = content + 8
+	b.w = content + 4
 	rows := len(b.lines)
 	if b.quote != "" {
 		rows++
@@ -725,9 +690,6 @@ func (m Model) bodyInner() ui.Rect {
 		return ui.Rect{}
 	}
 	ch := 5
-	if r.H >= 30 {
-		ch = 6
-	}
 	if r.H < 24 && m.replyTo == nil {
 		ch = 3
 	}
@@ -765,13 +727,10 @@ func (s *scene) body(r ui.Rect) {
 	defer c.Restore(restore)
 	items := m.titems(inner.W)
 	lo, hi := window(items, inner.H, m.msgTop, m.messageIndex)
-	totalHeight := 0
-	for _, item := range items {
-		totalHeight += item.h + 1
-	}
-	totalHeight = max(0, totalHeight-1)
-	topAligned := lo == 0 && hi == len(items)-1 && totalHeight <= inner.H
-	drawItem := func(it titem, y int) {
+	y := inner.Bottom()
+	for i := hi; i >= lo; i-- {
+		it := items[i]
+		y -= it.h
 		if it.day {
 			w := ui.StringWidth(it.label) + 6
 			pr := ui.R(inner.X+(inner.W-w)/2, y, w, 3)
@@ -784,22 +743,7 @@ func (s *scene) body(r ui.Rect) {
 			s.drawBubble(inner, y, b, sel, s.is(fmt.Sprintf("msg:%d", it.idx)))
 			s.add(ui.R(inner.X, y, inner.W, it.h), fmt.Sprintf("msg:%d", it.idx))
 		}
-	}
-	if topAligned {
-		y := inner.Y
-		for i := lo; i <= hi; i++ {
-			it := items[i]
-			drawItem(it, y)
-			y += it.h + 1
-		}
-	} else {
-		y := inner.Bottom()
-		for i := hi; i >= lo; i-- {
-			it := items[i]
-			y -= it.h
-			drawItem(it, y)
-			y--
-		}
+		y--
 	}
 	if lo > 0 {
 		c.Text(inner.Right()-3, inner.Y, "▲", ui.Accent, 0, true)
@@ -822,9 +766,15 @@ func (s *scene) drawBubble(inner ui.Rect, y int, b bubble, selected, hover bool)
 	if b.own {
 		x = inner.Right() - 2 - b.w
 	}
-	c.Fill(ui.R(x+1, y, b.w-2, 1), col)
+	c.Put(x, y, '▗', col, 0, false)
+	c.Put(x+b.w-1, y, '▖', col, 0, false)
+	c.Put(x, y+b.h-1, '▝', col, 0, false)
+	c.Put(x+b.w-1, y+b.h-1, '▘', col, 0, false)
+	for i := 1; i < b.w-1; i++ {
+		c.Put(x+i, y, '▄', col, 0, false)
+		c.Put(x+i, y+b.h-1, '▀', col, 0, false)
+	}
 	c.Fill(ui.R(x, y+1, b.w, b.h-2), col)
-	c.Fill(ui.R(x+1, y+b.h-1, b.w-2, 1), col)
 	if selected {
 		for i := 1; i < b.h-1; i++ {
 			c.Put(x-1, y+i, '▌', ui.Accent, 0, false)
@@ -872,31 +822,16 @@ func (s *scene) meta(x, row int, b bubble, col ui.Color) {
 
 func (s *scene) composerBar(r ui.Rect) {
 	m, c := s.m, s.c
-	outer := r
-	bordered := r.H >= 6
-	if bordered {
-		c.Box(r, ui.Border, ui.Panel)
-		r = ui.R(r.X+1, r.Y+1, r.W-2, r.H-2)
-	} else {
-		r = ui.R(r.X+1, r.Y, r.W-2, r.H)
-	}
 	y := r.Y
 	if m.replyTo != nil {
-		y = outer.Y + 2
+		y = r.Y + 2
 		quote := "Replying to " + m.quotedSender(m.replyTo.Sender) + ": " + ui.SingleLine(m.replyTo.Body)
-		quoteY := outer.Y
-		if bordered {
-			quoteY++
-		}
-		c.Text(outer.X+2, quoteY, ui.Truncate(quote, outer.W-4, "…"), ui.Accent, ui.Panel, false)
-	} else if outer.H >= 5 && !bordered {
+		c.Text(r.X+2, r.Y, ui.Truncate(quote, r.W-4, "…"), ui.Accent, ui.Panel, false)
+	} else if r.H >= 5 {
 		y++
 	}
-	controlH := min(4, r.Bottom()-y)
-	if controlH < 3 {
-		controlH = 3
-	}
-	plus := ui.R(r.X, y, 8, controlH)
+	r = ui.R(r.X+1, r.Y, r.W-2, r.H)
+	plus := ui.R(r.X, y, 7, 3)
 	border := ui.Border
 	if s.is("plus") {
 		border = ui.Accent
@@ -904,8 +839,8 @@ func (s *scene) composerBar(r ui.Rect) {
 	c.Box(plus, border, ui.Panel)
 	s.center(plus, "+", ui.Text, ui.Panel, true)
 	s.add(plus, "plus")
-	send := ui.R(r.Right()-8, y, 8, controlH)
-	in := ui.R(plus.Right()+1, y, send.X-plus.Right()-2, controlH)
+	send := ui.R(r.Right()-8, y, 8, 3)
+	in := ui.R(plus.Right()+1, y, send.X-plus.Right()-2, 3)
 	ib := ui.Border
 	if m.composing || s.is("compose") {
 		ib = ui.Accent
@@ -916,16 +851,16 @@ func (s *scene) composerBar(r ui.Rect) {
 	if m.composer != "" || m.composing {
 		text, fg = strings.ReplaceAll(ui.SafeText(m.composer), "\n", "↵"), ui.Text
 	}
-	avail := in.W - 4 - 8
+	avail := in.W - 4 - 5
 	shown := ui.TailFit(text, avail)
 	if m.composer == "" && !m.composing {
 		shown = ui.Truncate(shown, avail, "…")
 	}
-	w := c.Text(in.X+2, y+controlH/2, shown, fg, ui.Panel, false)
+	w := c.Text(in.X+2, y+1, shown, fg, ui.Panel, false)
 	if m.composing && (m.settings.ReducedMotion || m.frame%2 == 0) {
-		c.Fill(ui.R(in.X+2+w, y+controlH/2, 1, 1), ui.Accent)
+		c.Fill(ui.R(in.X+2+w, y+1, 1, 1), ui.Accent)
 	}
-	emoji := ui.R(in.Right()-8, y+controlH/2, 3, 1)
+	emoji := ui.R(in.Right()-5, y+1, 3, 1)
 	for _, ic := range []struct {
 		r     ui.Rect
 		glyph string
@@ -938,7 +873,6 @@ func (s *scene) composerBar(r ui.Rect) {
 		s.c.Text(ic.r.X+1, ic.r.Y, ic.glyph, fgc, ui.Panel, true)
 		s.add(ic.r, ic.id)
 	}
-	c.Text(in.Right()-3, y+controlH/2, "⌁", ui.Dim, ui.Panel, false)
 	bg := ui.Accent
 	if s.is("send") {
 		bg = ui.AccentHi

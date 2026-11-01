@@ -65,6 +65,7 @@ func SeedDemo(ctx context.Context, repo history.Repository) error {
 		{"Lethabo", "Nice, build is green now ✅", "22:02", false},
 		{"You", "Bet, I'll test it now.", "22:07", true},
 		{"Joshua", "All good on my side. UI looks clean now.", "22:14", false},
+		{"You", "Perfect 👌", "22:14", true},
 	}
 	for i, t := range thread {
 		status := ""
@@ -85,24 +86,17 @@ func SeedDemo(ctx context.Context, repo history.Repository) error {
 // demoPhoto is a synthetic profile picture so the photo path is exercised
 // without any network access.
 func demoPhoto() *ui.Photo {
-	var px [8][8]ui.Color
-	for y := 0; y < 8; y++ {
+	var px [6][8]ui.Color
+	for y := 0; y < 6; y++ {
 		for x := 0; x < 8; x++ {
-			shade := uint32(12 + y*2 + x)
-			px[y][x] = ui.Hex(shade<<16 | (shade+7)<<8 | (shade + 14))
+			v := uint32(0x1A + y*7 + x*2)
+			px[y][x] = ui.Hex(v<<16 | (v+6)<<8 | (v + 14))
 		}
 	}
-	px[2][3], px[2][4] = ui.Hex(0x46525A), ui.Hex(0x46525A)
 	for x := 2; x < 6; x++ {
-		px[3][x] = ui.Hex(0x79848A)
+		px[3][x] = ui.Hex(0xB9C3CC)
+		px[4][x] = ui.Hex(0x090B0E)
 	}
-	for x := 1; x < 7; x++ {
-		px[4][x] = ui.Hex(0x182127)
-	}
-	for _, x := range []int{1, 2, 5, 6} {
-		px[5][x] = ui.Hex(0x090C10)
-	}
-	px[5][3], px[5][4] = ui.Hex(0x151A1D), ui.Hex(0x151A1D)
 	return ui.PhotoFromColors(px)
 }
 
@@ -113,14 +107,6 @@ func DemoModel(runtime *Runtime, settings config.Settings, settingsPath string) 
 	m.demoSubtitle = map[string]string{demoChats[0].id: "6 members"}
 	m.active, m.chatID, m.chatTitle = chatScreen, demoChats[0].id, demoChats[0].title
 	m.conversations, _ = m.repo.Conversations(m.ctx, m.account, nil, 50)
-	for i := range m.conversations {
-		if m.conversations[i].ID == demoChats[0].id {
-			m.conversations[i].LastBody = "Pushed the fix ✓"
-			m.conversations[i].LastSender = "Joshua"
-			m.conversations[i].LastFromMe = false
-			break
-		}
-	}
 	m.messages, _ = m.repo.Messages(m.ctx, m.account, m.chatID, nil, 50)
 	for _, ch := range demoChats {
 		if ch.unread > 0 {

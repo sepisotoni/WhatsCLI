@@ -14,7 +14,7 @@ func Doodle(c *Canvas, r Rect, ink Color) {
 			h ^= h >> 15
 			h *= 2246822519
 			h ^= h >> 13
-			if x%2 == 0 && h%9 == 0 {
+			if x%2 == 0 && h%13 == 0 {
 				c.Put(x, y, glyphs[int(h>>8)%len(glyphs)], ink, 0, false)
 			}
 		}

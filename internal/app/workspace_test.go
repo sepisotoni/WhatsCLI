@@ -43,9 +43,6 @@ func TestSnapshots(t *testing.T) {
 		}
 	}
 	base := demoFixture(t)
-	base.width, base.height = 167, 47
-	base.fitList()
-	base.fitMessages()
 	write("workspace", base)
 	m := base
 	m.search = ""
@@ -116,7 +113,7 @@ func TestWorkspaceMatchesReferenceContent(t *testing.T) {
 	m := demoFixture(t)
 	view := plain(m)
 	for _, text := range []string{"Chats", "12", "Umbrella Devs", "6 members", "Online", "Joshua", "Pushed the fix for the QR flow.",
-		"Lethabo", "Nice, build is green now ✅", "Bet, I'll test it now.", "Today", "Type a message", "Archive",
+		"Lethabo", "Nice, build is green now ✅", "Bet, I'll test it now.", "Perfect 👌", "Today", "Type a message", "Archive",
 		"Search chats", "DEMO", "22:14", "21:47", "Merensky 9K", "Qhawe (Secondary)", "TRITECH Team", "▤ Notes.pdf", "▣ Image"} {
 		if !strings.Contains(view, text) {
 			t.Errorf("workspace missing %q", text)
@@ -126,28 +123,6 @@ func TestWorkspaceMatchesReferenceContent(t *testing.T) {
 		if strings.Contains(view, text) {
 			t.Errorf("stale text %q", text)
 		}
-	}
-}
-
-func TestWideWorkspaceMatchesReferenceGeometry(t *testing.T) {
-	m := demoFixture(t)
-	m.width, m.height = 167, 47
-	m.fitList()
-	g := m.geo()
-	if g.rail != ui.R(1, 1, 11, 45) || g.list != ui.R(13, 1, 43, 45) || g.main != ui.R(56, 1, 110, 45) || g.foot != (ui.Rect{}) {
-		t.Fatalf("unexpected wide workspace geometry: %+v", g)
-	}
-	if got := m.listCapacity(); got != 6 {
-		t.Fatalf("wide chat list shows %d rows, want 6", got)
-	}
-	view := plain(m)
-	for _, text := range []string{"Qhawe (Secondary)", "Archive", "Pushed the fix ✓"} {
-		if !strings.Contains(view, text) {
-			t.Errorf("wide workspace missing %q", text)
-		}
-	}
-	if strings.Contains(view, "DEMO") {
-		t.Fatal("wide workspace rendered the footer")
 	}
 }
 
@@ -244,7 +219,7 @@ func TestMouseHoverClickAndWheelUseRenderedRegions(t *testing.T) {
 		t.Fatalf("no region %q", id)
 		return
 	}
-	for _, id := range []string{"rail:new", "rail:compose", "rail:contacts", "rail:statuses", "rail:files", "rail:settings", "search", "chat:2", "plus", "emoji", "send", "head:more", "compose", "archive"} {
+	for _, id := range []string{"rail:new", "rail:settings", "search", "chat:2", "plus", "emoji", "send", "head:more", "compose", "archive"} {
 		x, y := find(id)
 		if got := m.hitAt(x, y); got != id {
 			t.Fatalf("%s: cell %d,%d hit %q", id, x, y, got)
