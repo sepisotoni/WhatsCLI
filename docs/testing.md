@@ -2,7 +2,7 @@
 
 ## Verification status
 
-The current **`go test ./...` run is confirmed passing**. Race-detector, vet, build, and offline PTY checks are not recorded as passed in this document until separately confirmed. The commands below are also reproducible check instructions, not evidence that each has completed.
+During the neon-workspace implementation, **`go test ./...`, `go vet ./...`, `go test -race ./...`, and `go build ./cmd/whats-cli` passed**, along with eight installer tests. Offline PTY checks exercised demo navigation/composition/local sends and offline welcome/consent/history navigation, clean shutdown, temporary-state cleanup, and absence of device-session credentials. These checks do not establish broad terminal/SSH compatibility or live service behavior.
 
 **No live account pairing or real message/file sends have occurred.** No result from synthetic fixtures, a temporary session-store round trip, or an offline UI run demonstrates WhatsApp connectivity, actual account/session compatibility, full history recovery, successful delivery, reconnects, or unlinking.
 
@@ -18,6 +18,9 @@ go test ./...
 go vet ./...
 go test -race ./...
 go build ./cmd/whats-cli
+python3 -m unittest discover -s tests -p '*_test.py'
+sh -n install.sh
+python3 tests/terminal_smoke.py ./whats-cli
 ```
 
 The race detector requires a supported platform/toolchain and its native compiler prerequisites. The automated suite uses fake clients, synthetic upstream events/QR data, and temporary files/databases. Some session tests generate synthetic device identity material locally but never pair it or connect to a service. No WhatsApp account, real device session, API key, or existing private history is required. Initial module/toolchain downloads may require network access; test logic does not connect to WhatsApp.
@@ -29,6 +32,9 @@ Do not start the default live-mode app to test a local UI change: persisted cons
 | Test file | Scope checked |
 | --- | --- |
 | `internal/app/model_test.go` | Acceptance waits for successful save; failed save leaves network gated; pre-consent palette restrictions; Unicode filtering/backspace; composer treats shortcuts as text; stale page rejection; refresh keeps older cursors; nested overlays return correctly; recipient guard and `Ctrl+U`; minimum-size guidance and scrolling |
+| `internal/app/workspace_test.go` | Workspace dimensions from 30×10 to 200×60; synthetic snapshot; filtered navigation; new-chat/Meta AI draft guards; stale-account rejection; shared mouse geometry; local-only demo sends; last-message and revoked-message previews |
+| `internal/messaging/recipients_test.go` | International-number validation; both upstream Meta AI identities; bot-invoke reply normalization; delivered/read/played receipt mapping |
+| `tests/install_test.py` | Paths with spaces, no-overwrite rules, existing-command preservation, failed-build cleanup, symlink/unsupported-OS rejection, successful local rebuild, preservation of previous binary on failed rebuild |
 | `internal/app/runtime_test.go` | Runtime consent gating; fake-client text send/pending/self-echo reconciliation; admitted events drain at shutdown; closed runtime rejects operations; logout gating; incoming storage error becomes visible |
 | `internal/config/config_test.go` | Settings/consent/mouse round trip; private save permissions; symlink and trailing JSON rejection |
 | `internal/history/sqlite_test.go` | Original storage API preserves original/edit bodies and deletion marker across reopen |
@@ -58,7 +64,7 @@ go run ./cmd/whats-cli -offline -state-dir "$scratch"
 6. Check the disposable directory for `settings.json` and `history.db`, directory/file modes, and absence of a real device-session database. A custom `-db` should move history only, not settings/session. Do not publish database contents.
 7. Repeat at narrow widths/heights and in an SSH interactive terminal; check resize guidance, scrolling, mouse setting, alternate-screen restoration, interruption, and exit behavior. A single successful PTY/SSH run is not broad terminal compatibility certification.
 
-A fresh offline database has no chats, and the app has no new-chat UI. `-offline` currently stays in the `local` legacy account namespace, with no linked-account archive selector. Composer, revision, and attachment screens therefore cannot all be exercised through a fresh empty inbox without synthetic local fixtures; unit tests cover selected transitions separately. Never seed real messages or credentials into committed fixtures.
+A fresh offline database has no chats. Use `n` to create an empty local direct-chat entry, or `-demo` for disposable synthetic conversations and local-only demo sends. `-offline` currently stays in the `local` legacy account namespace, with no linked-account archive selector. Never seed real messages or credentials into committed fixtures.
 
 After quitting, remove only the disposable directory you created when no longer needed. Do not delete a real state/history directory. No live account access is authorized by this smoke procedure.
 
@@ -68,7 +74,8 @@ These are **future checks requiring separate explicit authorization**, not compl
 
 - Real spare-account QR scanability, expiry/retry/cancel, unsupported verification steps, linked-device visibility, and restart using the saved session.
 - Network interruption/reconnect and upstream permanent-disconnect behavior; confirmed logout, server-side unlink verification, restart/re-pair, and account isolation in real events.
-- Direct/group text receive/send with harmless content; pending/result/self-echo ordering; failures/timeouts/cancellation and duplicate-avoidance guidance. Do not claim delivered/read handling beyond the current adapter's `sent` mapping.
+- Direct/group/bot text receive/send with harmless content; pending/result/self-echo ordering; failures/timeouts/cancellation and duplicate-avoidance guidance. Verify delivered/read receipts live; current tests establish mapping/storage behavior only, not all-member group-read semantics.
+- Meta AI replies on an explicitly authorized paired account where Meta enables the feature. Neither new-chat creation nor a synthetic bot reply establishes account/region availability.
 - History-sync availability and gaps; replay deduplication; originals/edits/revokes arriving out of order; only actually received text retained. Do not promise a full account archive.
 - Explicit document preview/confirmation and a harmless host-local send, including over SSH; cancellation, limits, and recipient display. Never test with private files or infer immutable preview binding from the current independent reopen design.
 

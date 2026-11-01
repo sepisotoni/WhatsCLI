@@ -224,7 +224,11 @@ func (r *SQLiteRepository) Conversations(ctx context.Context, account string, be
 	if err != nil {
 		return nil, err
 	}
-	query := `SELECT account_id,id,title,updated_at FROM account_conversations WHERE account_id=?`
+	query := `SELECT account_id,id,title,updated_at,
+		COALESCE((SELECT CASE WHEN m.deleted_at IS NOT NULL THEN '[deleted; retained]' ELSE m.body END
+		FROM account_messages m WHERE m.account_id=account_conversations.account_id
+		AND m.chat_id=account_conversations.id ORDER BY m.created_at DESC,m.id DESC LIMIT 1),'')
+		FROM account_conversations WHERE account_id=?`
 	args := []any{account}
 	if before != nil {
 		query += ` AND (updated_at<? OR (updated_at=? AND id<?))`
@@ -240,7 +244,7 @@ func (r *SQLiteRepository) Conversations(ctx context.Context, account string, be
 	for rows.Next() {
 		var c Conversation
 		var at string
-		if err := rows.Scan(&c.AccountID, &c.ID, &c.Title, &at); err != nil {
+		if err := rows.Scan(&c.AccountID, &c.ID, &c.Title, &at, &c.LastBody); err != nil {
 			return nil, err
 		}
 		c.UpdatedAt, err = parseTime(at)

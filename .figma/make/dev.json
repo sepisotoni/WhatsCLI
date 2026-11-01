@@ -1,0 +1,4 @@
+{
+  "installOn": ["go.mod", "go.sum"],
+  "restartOn": ["cmd/**/*.go", "internal/**/*.go"]
+}

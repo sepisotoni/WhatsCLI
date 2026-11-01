@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Recompile on the source-file restarts configured in dev.json.
+mkdir -p bin
+go build -mod=readonly -trimpath -o bin/whatscli ./cmd/whats-cli
+# The native application needs a PTY, not an HTTP server. This page documents
+# that boundary; it never opens a WhatsApp session or exposes private state.
+exec python3 .figma/make/preview.py --port "${PORT:?PORT is required}"

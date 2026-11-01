@@ -7,7 +7,6 @@ import (
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/proto/waWeb"
-	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 
 	"whatscli/internal/history"
@@ -20,8 +19,11 @@ func normalizeMessage(account string, source *events.Message, title string) (his
 		return history.IncomingEvent{}, false
 	}
 	chat := source.Info.Chat.ToNonAD()
-	if chat.Server != types.DefaultUserServer && chat.Server != types.HiddenUserServer && chat.Server != types.GroupServer {
+	if !supportedChat(chat) {
 		return history.IncomingEvent{}, false
+	}
+	if IsMetaAI(chat.String()) {
+		title = "Meta AI"
 	}
 	if title == "" && !source.Info.IsGroup && !source.Info.IsFromMe {
 		title = source.Info.PushName

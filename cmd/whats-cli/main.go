@@ -34,7 +34,24 @@ func run() error {
 	stateDir := flag.String("state-dir", filepath.Dir(defaultDB), "private settings/session/history directory on this host")
 	dbPath := flag.String("db", "", "override history database path")
 	offline := flag.Bool("offline", false, "disable all WhatsApp network operations")
+	demo := flag.Bool("demo", false, "explore synthetic conversations using disposable state; never connects to WhatsApp")
+	version := flag.Bool("version", false, "show application version")
 	flag.Parse()
+	if *version {
+		fmt.Println("WhatsCLI 0.2.0")
+		return nil
+	}
+	if *demo {
+		if *dbPath != "" {
+			return errors.New("-demo cannot be combined with -db")
+		}
+		dir, err := os.MkdirTemp("", "whatscli-demo-*")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(dir)
+		*stateDir, *offline = dir, true
+	}
 	if err := privatefs.EnsureDir(*stateDir); err != nil {
 		return err
 	}
@@ -42,6 +59,10 @@ func run() error {
 	settings, err := config.Load(settingsPath)
 	if err != nil {
 		return err
+	}
+	if *demo {
+		settings.ConsentVersion = config.ConsentVersion
+		settings.Mouse = true
 	}
 	path := *dbPath
 	if path == "" {
@@ -52,6 +73,11 @@ func run() error {
 		return err
 	}
 	defer repo.Close()
+	if *demo {
+		if err := app.SeedDemo(context.Background(), repo); err != nil {
+			return err
+		}
+	}
 	var client messaging.Client
 	if *offline {
 		client = &offlineClient{events: make(chan messaging.Event)}
@@ -67,9 +93,13 @@ func run() error {
 	defer cancel()
 	options := []tea.ProgramOption{tea.WithAltScreen(), tea.WithContext(ctx)}
 	if settings.Mouse {
-		options = append(options, tea.WithMouseCellMotion())
+		options = append(options, tea.WithMouseAllMotion())
 	}
-	program := tea.NewProgram(app.NewWithRuntime(runtime, settings, settingsPath), options...)
+	model := app.NewWithRuntime(runtime, settings, settingsPath)
+	if *demo {
+		model = app.DemoModel(runtime, settings, settingsPath)
+	}
+	program := tea.NewProgram(model, options...)
 	_, err = program.Run()
 	if errors.Is(err, tea.ErrProgramKilled) && ctx.Err() != nil {
 		return nil

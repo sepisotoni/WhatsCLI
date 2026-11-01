@@ -29,6 +29,7 @@ const (
 	attachmentScreen
 	confirmFileScreen
 	logoutScreen
+	newChatScreen
 )
 
 type refreshMsg struct{}
@@ -64,6 +65,10 @@ type sentMsg struct {
 	account, chat string
 	err           error
 }
+type createdChatMsg struct {
+	account, chat, title string
+	err                  error
+}
 
 type Model struct {
 	repo                               history.Repository
@@ -94,12 +99,16 @@ type Model struct {
 	notice                             string
 	scroll                             int
 	fullscreen                         bool
+	search, newChat, hover             string
+	searching, demo                    bool
+	frame                              int
+	pulseRunning                       bool
 }
 
-var commands = []string{"conversations", "connect", "attach", "help", "settings", "logout", "quit"}
+var commands = []string{"conversations", "new chat", "meta ai", "connect", "attach", "help", "settings", "logout", "quit"}
 
 func New(repo history.Repository) Model {
-	return Model{repo: repo, ctx: context.Background(), account: "local", width: 80, height: 24, active: welcomeScreen}
+	return Model{repo: repo, ctx: context.Background(), account: "local", width: 80, height: 24, active: welcomeScreen, pulseRunning: true}
 }
 
 func NewWithRuntime(runtime *Runtime, settings config.Settings, settingsPath string) Model {
@@ -113,12 +122,15 @@ func NewWithRuntime(runtime *Runtime, settings config.Settings, settingsPath str
 }
 
 func (m Model) Init() tea.Cmd {
-	var cmds []tea.Cmd
+	cmds := []tea.Cmd{pulse()}
 	if m.runtime != nil {
 		cmds = append(cmds, m.wait())
 	}
 	if m.settings.Accepted() {
-		cmds = append(cmds, m.loadChats(nil), m.connect())
+		cmds = append(cmds, m.loadChats(nil))
+		if !m.demo {
+			cmds = append(cmds, m.connect())
+		}
 	}
 	return tea.Batch(cmds...)
 }
@@ -193,8 +205,15 @@ func (m Model) save(settings config.Settings, consent bool) tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case pulseMsg:
+		m.frame = (m.frame + 1) % 4
+		if !m.settings.ReducedMotion {
+			return m, pulse()
+		}
+		m.pulseRunning = false
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.hover = ""
 	case refreshMsg:
 		if m.runtime == nil {
 			return m, nil
@@ -241,7 +260,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.settings = msg.settings
 		var mouse tea.Cmd = tea.DisableMouse
 		if m.settings.Mouse {
-			mouse = tea.EnableMouseCellMotion
+			mouse = tea.EnableMouseAllMotion
 		}
 		if msg.consent {
 			if m.runtime != nil {
@@ -249,6 +268,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.active = pairingScreen
 			return m, tea.Batch(mouse, m.connect(), m.loadChats(nil))
+		}
+		if !m.settings.ReducedMotion && !m.pulseRunning {
+			m.pulseRunning = true
+			return m, tea.Batch(mouse, pulse())
 		}
 		return m, mouse
 	case chatsMsg:
@@ -270,6 +293,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chatIndex = i
 			}
 		}
+		if indices := m.visibleChats(); len(indices) > 0 {
+			found := false
+			for _, i := range indices {
+				found = found || i == m.chatIndex
+			}
+			if !found {
+				m.chatIndex = indices[0]
+			}
+		}
+	case createdChatMsg:
+		if msg.account != m.account {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.notice = "Could not create the conversation locally; nothing was sent."
+			return m, nil
+		}
+		if m.sending || m.composer != "" {
+			m.notice = "Conversation saved. Clear the current draft before switching recipients."
+			return m, m.loadChats(nil)
+		}
+		m.chatID, m.chatTitle, m.messages = msg.chat, msg.title, nil
+		m.messageIndex, m.messageBefore = 0, nil
+		m.active, m.trail, m.newChat = chatScreen, nil, ""
+		m.search, m.searching = "", false
+		return m, tea.Batch(m.loadChats(nil), m.loadMessages(nil))
 	case messagesMsg:
 		if msg.account != m.account || msg.chat != m.chatID || !sameCursor(msg.before, m.messageBefore) {
 			return m, nil
@@ -317,6 +366,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = msg.err.Error()
 		} else {
 			m.notice = "Sent"
+			if m.demo {
+				m.notice = "Demo message saved locally; nothing transmitted."
+			}
 			if msg.account == m.account && msg.chat == m.chatID {
 				m.composer = ""
 				m.path = ""
@@ -325,7 +377,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.loadMessages(m.messageBefore)
 	case tea.MouseMsg:
-		if !m.settings.Mouse || m.composing || m.active == commandScreen {
+		if !m.settings.Mouse {
+			return m, nil
+		}
+		if m.width >= 90 && m.height >= 20 && (m.active == inboxScreen || m.active == chatScreen) {
+			return m, m.mouse(msg)
+		}
+		if m.composing || m.active == commandScreen || m.active == newChatScreen || m.active == attachmentScreen {
 			return m, nil
 		}
 		if msg.Button == tea.MouseButtonWheelUp {
@@ -356,6 +414,9 @@ func (m *Model) key(key tea.KeyMsg) tea.Cmd {
 		m.notice = "Cancelling send; delivery may be uncertain."
 		return nil
 	}
+	if m.active == newChatScreen {
+		return m.newChatKey(key)
+	}
 	if m.active == commandScreen {
 		return m.palette(key)
 	}
@@ -364,6 +425,30 @@ func (m *Model) key(key tea.KeyMsg) tea.Cmd {
 	}
 	if m.composing {
 		return m.compose(key)
+	}
+	if m.searching {
+		return m.searchKey(key)
+	}
+	if (m.active == inboxScreen || m.active == chatScreen) && m.settings.Accepted() {
+		switch k {
+		case "tab":
+			if m.active == chatScreen {
+				m.active = inboxScreen
+			} else if m.chatID != "" {
+				m.active = chatScreen
+			}
+			return nil
+		case "ctrl+f":
+			m.active, m.searching = inboxScreen, true
+			return nil
+		case "n":
+			m.newChat = ""
+			m.openOverlay(newChatScreen)
+			return nil
+		case "?":
+			m.openOverlay(helpScreen)
+			return nil
+		}
 	}
 	if k == "q" {
 		return tea.Quit
@@ -426,27 +511,11 @@ func (m *Model) key(key tea.KeyMsg) tea.Cmd {
 	case inboxScreen:
 		switch k {
 		case "up":
-			if m.chatIndex > 0 {
-				m.chatIndex--
-			}
+			m.moveChat(-1)
 		case "down":
-			if m.chatIndex+1 < len(m.conversations) {
-				m.chatIndex++
-			}
+			m.moveChat(1)
 		case "enter":
-			if len(m.conversations) > 0 {
-				c := m.conversations[m.chatIndex]
-				if c.ID != m.chatID && (m.sending || m.composer != "") {
-					m.notice = "Finish the send or clear the current draft (Ctrl+U in composer) before changing chats."
-					return nil
-				}
-				m.chatID, m.chatTitle = c.ID, c.Title
-				m.messages = nil
-				m.messageBefore = nil
-				m.messageIndex = 0
-				m.active = chatScreen
-				return m.loadMessages(nil)
-			}
+			return m.openChat()
 		case "p":
 			if len(m.conversations) > 0 {
 				c := m.conversations[len(m.conversations)-1]
@@ -500,9 +569,13 @@ func (m *Model) key(key tea.KeyMsg) tea.Cmd {
 			m.openOverlay(settingsScreen)
 		}
 	case settingsScreen:
-		if k == "m" && !m.saving {
+		if (k == "m" || k == "t") && !m.saving {
 			settings := m.settings
-			settings.Mouse = !settings.Mouse
+			if k == "m" {
+				settings.Mouse = !settings.Mouse
+			} else {
+				settings.ReducedMotion = !settings.ReducedMotion
+			}
 			m.saving = true
 			return m.save(settings, false)
 		}
@@ -597,6 +670,11 @@ func (m *Model) palette(key tea.KeyMsg) tea.Cmd {
 		case "connect":
 			m.active = pairingScreen
 			return m.connect()
+		case "new chat":
+			m.newChat = ""
+			m.openOverlay(newChatScreen)
+		case "meta ai":
+			return m.openMetaAI()
 		case "logout":
 			m.active = logoutScreen
 		case "attach":
@@ -698,6 +776,23 @@ func (m *Model) attachment(key tea.KeyMsg) tea.Cmd {
 }
 
 func (m *Model) send(text, path string) tea.Cmd {
+	if m.demo {
+		if path != "" {
+			m.notice = "Demo mode does not read or send files."
+			return nil
+		}
+		account, chat, title, repo, ctx := m.account, m.chatID, m.chatTitle, m.repo, m.ctx
+		m.sending = true
+		m.notice = "Saving demo message locally; nothing is transmitted."
+		return func() tea.Msg {
+			err := repo.ApplyEvent(ctx, history.IncomingEvent{
+				Kind: history.MessageEvent, AccountID: account, ChatID: chat, Title: title,
+				MessageID: fmt.Sprintf("demo-send-%d", time.Now().UnixNano()), Sender: "You",
+				Body: text, Timestamp: time.Now().UTC(), FromMe: true, Status: "sent",
+			})
+			return sentMsg{account, chat, err}
+		}
+	}
 	if m.runtime == nil || !m.connection.Online {
 		m.notice = "Not connected; nothing sent."
 		return nil
@@ -722,6 +817,12 @@ func (m Model) View() string {
 	if m.active == pairingScreen && m.connection.QR != "" && m.fullscreen {
 		return ui.QR(m.connection.QR, m.width, m.height-2) + "\nEsc · exit fullscreen    q · cancel and quit"
 	}
+	if m.active == pairingScreen && m.width >= 110 && m.height >= 26 {
+		return m.pairingView()
+	}
+	if m.width >= 90 && m.height >= 20 && (m.active == inboxScreen || m.active == chatScreen) {
+		return m.workspaceView()
+	}
 	width := m.width - 4
 	height := m.height - 7
 	title, body, footer := m.content(width, height)
@@ -741,7 +842,15 @@ func (m Model) View() string {
 	if m.notice != "" {
 		status = m.notice
 	}
-	return ui.Brand("WhatsCLI · "+ui.SingleLine(title)) + "\n" + ui.Muted(ansi.Truncate(ui.SingleLine(status), m.width, "…")) + "\n\n" + visible + "\n\n" + ui.Muted(ansi.Truncate(footer, m.width, "…"))
+	if m.demo {
+		status = "DEMO · synthetic conversations · no network"
+	}
+	if m.active == welcomeScreen && m.width >= 60 && m.height >= 20 {
+		return m.welcomeView()
+	}
+	return ui.Frame(ui.Brand(" >_ WhatsCLI · "+ui.SingleLine(title))+"\n"+
+		ui.Muted(" "+ansi.Truncate(ui.SingleLine(status), max(1, m.width-4), "…"))+"\n\n"+
+		visible+"\n\n"+ui.Muted(ansi.Truncate(footer, m.width-2, "…")), m.width, m.height, true)
 }
 
 func (m Model) content(width, height int) (string, string, string) {
@@ -753,7 +862,12 @@ func (m Model) content(width, height int) (string, string, string) {
 		if m.consentAccepted {
 			box = "[x]"
 		}
-		body := "STEP 01 / 02\n\n01  Independent and unofficial\nNot endorsed by WhatsApp or Meta. Unofficial clients may lead to account restrictions.\n\n02  Local retention\nDevice credentials and history remain on this host. History is not encrypted. Edits and revoked messages received by this client are retained locally.\n\n03  Early software\nUse a spare account. Complete history sync and account safety are not guaranteed.\n\n" + box + " I understand and accept these risks."
+		body := "BEFORE YOU CONNECT                                  STEP 01 / 02\n\n" +
+			ui.Brand("01  Independent and unofficial") + "\nNot created, sponsored, or endorsed by WhatsApp or Meta.\n\n" +
+			ui.Brand("02  Your account, your responsibility") + "\nUnofficial clients may lead to account restrictions.\nUse a spare account; account safety is not guaranteed.\n\n" +
+			ui.Brand("03  Local data storage") + "\nCredentials and history remain on this host, unencrypted.\nEdits and revoked messages received here are retained locally.\n\n" +
+			ui.Brand("04  Early software") + "\nLive compatibility and complete history sync are not certified.\nDo not rely on this client for critical communication.\n\n" +
+			ui.Brand(box) + " I understand and accept these risks."
 		return "Disclaimer & consent", body, "Space · accept    Enter · save/continue    Esc · back"
 	case pairingScreen:
 		body := "Open WhatsApp → Linked devices → Link a device.\nNever share the pairing QR. Keep this terminal open.\n\n"
@@ -778,17 +892,31 @@ func (m Model) content(width, height int) (string, string, string) {
 		return "Commands", strings.Join(lines, "\n"), "↑/↓ · select    Enter · run    Esc · return"
 	case inboxScreen:
 		if len(m.conversations) == 0 {
-			return "Conversations", "No conversations received yet.\nUse /connect to link, then send this account a test message.\nOlder chats depend on the history WhatsApp provides.", "r · refresh    s · settings    / · commands    q · quit"
+			return "Conversations", "No conversations received yet.\nUse /connect to link, or n to start a new chat.\nOlder chats depend on the history WhatsApp provides.", "n · new chat    Ctrl+F · search    s · settings    / · commands"
 		}
 		var lines []string
-		start := max(0, m.chatIndex-height+1)
-		for i := start; i < min(len(m.conversations), start+height); i++ {
+		indices := m.visibleChats()
+		selected := 0
+		for pos, i := range indices {
+			if i == m.chatIndex {
+				selected = pos
+			}
+		}
+		start := max(0, selected-height+2)
+		if m.searching || m.search != "" {
+			lines = append(lines, "Search: "+ui.SingleLine(m.search)+"▏")
+		}
+		for pos := start; pos < min(len(indices), start+height-1); pos++ {
+			i := indices[pos]
 			c := m.conversations[i]
 			prefix := "  "
 			if i == m.chatIndex {
 				prefix = "> "
 			}
 			lines = append(lines, ansi.Truncate(prefix+ui.SingleLine(c.Title), width, "…"))
+		}
+		if len(indices) == 0 {
+			lines = append(lines, "No matching chats. Esc clears search.")
 		}
 		return "Conversations", strings.Join(lines, "\n"), "↑/↓ · select  Enter · chat  p · older  r · newest  s · settings"
 	case chatScreen:
@@ -832,9 +960,11 @@ func (m Model) content(width, height int) (string, string, string) {
 		}
 		return "Message history", strings.Join(lines, "\n"), "↑/↓ · scroll    p · older versions    r · latest    Esc · back"
 	case settingsScreen:
-		return "Settings", fmt.Sprintf("Mouse wheel navigation: %t (m to toggle)\n\nHistory and credentials are stored on this execution host. History is not encrypted.\nEdits/deletions are retained, not erased.\n\nQuitting preserves your login. /logout unlinks with confirmation but retains local history.", m.settings.Mouse), "m · toggle mouse    Esc · back    / · commands"
+		return "Settings", fmt.Sprintf("INTERACTION\n\nMouse support: %t  [m]\nClick chats, buttons and composer; hover highlights controls.\nKeyboard navigation always remains available.\n\nReduced motion: %t  [t]\n\nPRIVACY\n\nHistory and credentials are stored on this execution host.\nHistory is not encrypted. Edits/deletions are retained.\nQuitting preserves your login. /logout unlinks with confirmation\nbut retains local history.", m.settings.Mouse, m.settings.ReducedMotion), "m · mouse    t · reduced motion    Esc · back    / · commands"
 	case helpScreen:
-		return "Help", "/ opens commands; type to filter, then arrows and Enter.\nSelect a conversation and press Enter.\ni composes; Enter sends, Ctrl+J adds a newline.\nEnter on a message shows retained versions.\np loads older pages; r returns to newest.\n\nFile paths refer to THIS host. Over SSH, copy laptop files with SCP/SFTP first. Files are sent as documents after confirmation (maximum 10 MiB).\n\nCalls, status publishing and rich stickers are not implemented. History can be incomplete.\n\nCtrl+C cancels and quits. Nothing is sent automatically.", "↑/↓ · scroll    Esc · return"
+		return "Help", "KEYBOARD FIRST\n\n/ or Ctrl+P opens commands; type to filter, then arrows and Enter.\nTab switches panes. Ctrl+F searches loaded chat titles/numbers.\nn starts a direct chat using an international phone number.\nThe meta ai command opens Meta AI (account/region dependent).\ni composes; Enter sends; Ctrl+J adds a newline.\nEsc leaves input; Ctrl+U clears a draft while composing.\nEnter on a selected message shows retained versions.\np loads older pages; r returns to newest.\ns opens settings; m toggles optional mouse support there.\n\nFile paths refer to THIS host. Over SSH, copy laptop files\nwith SCP/SFTP first. Documents require confirmation (max 10 MiB).\nCalls and rich stickers are not implemented.\nCtrl+C cancels and quits. Nothing is sent automatically.", "↑/↓ · scroll    Esc · return"
+	case newChatScreen:
+		return "New conversation", "NEW DIRECT CHAT\n\nEnter an international phone number including country code.\nExample: +27 82 123 4567\n\n" + ui.Brand("> "+ui.SingleLine(m.newChat)+"▏") + "\n\nEnter creates a local conversation; it sends nothing.\nThe recipient must have a WhatsApp account.\n\nFor Meta AI, use the meta ai command in the palette.", "Enter · open chat    Esc · cancel"
 	case attachmentScreen:
 		return "Choose host-local file", "Path on this computer (not your SSH client):\n\n" + ui.SingleLine(m.path) + "\n\nMaximum 10 MiB. Spaces are supported; do not add shell quotes.", "Enter · preview    Esc · cancel    Ctrl+C · quit"
 	case confirmFileScreen:

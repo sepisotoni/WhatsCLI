@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+go mod download
+go mod verify
+mkdir -p bin
+exec go build -mod=readonly -trimpath -o bin/whatscli ./cmd/whats-cli

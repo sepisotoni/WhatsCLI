@@ -1,0 +1,26 @@
+name: Go and installer checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.2"
+          cache: true
+      - run: go test ./...
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: go build ./cmd/whats-cli
+      - run: ./whats-cli -version
+      - run: python3 tests/terminal_smoke.py ./whats-cli
+      - run: python3 -m unittest discover -s tests -p '*_test.py'
+      - run: sh -n install.sh

@@ -34,6 +34,7 @@ type Conversation struct {
 	ID        string
 	Title     string
 	UpdatedAt time.Time
+	LastBody  string
 }
 
 type Message struct {

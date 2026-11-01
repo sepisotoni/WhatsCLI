@@ -315,14 +315,17 @@ func (t *transport) Logout(ctx context.Context) error {
 }
 
 func (t *transport) NewMessageID() string {
-	// The package helper needs no device store and remains safe before consent.
-	return whatsmeow.GenerateMessageID()
+	t.opMu.Lock()
+	defer t.opMu.Unlock()
+	// The client method supports a nil client before initialization. No session
+	// store or network connection is created merely to generate an outgoing ID.
+	return t.client.GenerateMessageID()
 }
 
 func destination(chat string) (types.JID, error) {
 	jid, err := types.ParseJID(chat)
-	if err != nil || jid.User == "" || (jid.Server != types.DefaultUserServer && jid.Server != types.HiddenUserServer && jid.Server != types.GroupServer) {
-		return types.EmptyJID, errors.New("destination must be a direct or group chat ID")
+	if err != nil || !supportedChat(jid) {
+		return types.EmptyJID, errors.New("destination must be a direct, group, or bot chat ID")
 	}
 	return jid.ToNonAD(), nil
 }
@@ -418,8 +421,12 @@ func (t *transport) handle(client *whatsmeow.Client, event any) {
 		if e.Type != types.ReceiptTypeDelivered && e.Type != types.ReceiptTypeRead && e.Type != types.ReceiptTypePlayed {
 			return
 		}
+		status := "delivered"
+		if e.Type == types.ReceiptTypeRead || e.Type == types.ReceiptTypePlayed {
+			status = "read"
+		}
 		for _, id := range e.MessageIDs {
-			message := history.IncomingEvent{Kind: history.DeliveryEvent, AccountID: account, ChatID: e.Chat.ToNonAD().String(), MessageID: id, EventID: "receipt:" + string(e.Type) + ":" + id, Timestamp: e.Timestamp, Status: "sent", FromMe: true}
+			message := history.IncomingEvent{Kind: history.DeliveryEvent, AccountID: account, ChatID: e.Chat.ToNonAD().String(), MessageID: id, EventID: "receipt:" + string(e.Type) + ":" + id, Timestamp: e.Timestamp, Status: status, FromMe: true}
 			t.emit(Event{Type: Incoming, AccountID: account, Message: &message})
 		}
 	}

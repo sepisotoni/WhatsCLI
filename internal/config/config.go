@@ -16,6 +16,7 @@ const ConsentVersion = 1
 type Settings struct {
 	ConsentVersion int  `json:"consent_version"`
 	Mouse          bool `json:"mouse"`
+	ReducedMotion  bool `json:"reduced_motion"`
 }
 
 func (s Settings) Accepted() bool { return s.ConsentVersion == ConsentVersion }
