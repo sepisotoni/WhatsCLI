@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
@@ -385,6 +386,92 @@ func (t *transport) SendText(ctx context.Context, chat, text, id string) (histor
 	return t.send(ctx, client, jid, &waE2E.Message{Conversation: proto.String(text)}, text, id)
 }
 
+func (t *transport) SendReply(ctx context.Context, chat, text, id string, target history.Message) (history.IncomingEvent, error) {
+	if text == "" || len(text) > 65536 || id == "" || target.ID == "" {
+		return history.IncomingEvent{}, errors.New("text, message ID, and reply target are required")
+	}
+	jid, err := destination(chat)
+	if err != nil {
+		return history.IncomingEvent{}, err
+	}
+	client, ctx, done, err := t.sendClient(ctx)
+	if err != nil {
+		return history.IncomingEvent{}, err
+	}
+	defer done()
+	contextInfo := &waE2E.ContextInfo{
+		StanzaID:      proto.String(target.ID),
+		RemoteJID:     proto.String(chat),
+		QuotedMessage: &waE2E.Message{Conversation: proto.String(target.Body)},
+	}
+	if strings.HasSuffix(chat, "@g.us") {
+		contextInfo.Participant = proto.String(target.Sender)
+	}
+	message := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+		Text: proto.String(text), ContextInfo: contextInfo,
+	}}
+	result, err := t.send(ctx, client, jid, message, text, id)
+	if err != nil {
+		return history.IncomingEvent{}, err
+	}
+	result.ReplyToID, result.ReplySender, result.ReplyBody = target.ID, target.Sender, target.Body
+	return result, nil
+}
+
+func (t *transport) SendReaction(ctx context.Context, chat string, target history.Message, emoji, id string) (history.IncomingEvent, error) {
+	if target.ID == "" || emoji == "" || len([]rune(emoji)) > 8 || id == "" {
+		return history.IncomingEvent{}, errors.New("reaction, message ID, and target are required")
+	}
+	jid, err := destination(chat)
+	if err != nil {
+		return history.IncomingEvent{}, err
+	}
+	client, ctx, done, err := t.sendClient(ctx)
+	if err != nil {
+		return history.IncomingEvent{}, err
+	}
+	defer done()
+	key := &waCommon.MessageKey{
+		RemoteJID: proto.String(jid.String()),
+		FromMe:    proto.Bool(target.FromMe),
+		ID:        proto.String(target.ID),
+	}
+	if strings.HasSuffix(chat, "@g.us") {
+		key.Participant = proto.String(target.Sender)
+	}
+	resp, err := client.SendMessage(ctx, jid, &waE2E.Message{ReactionMessage: &waE2E.ReactionMessage{
+		Key: key, Text: proto.String(emoji), SenderTimestampMS: proto.Int64(time.Now().UnixMilli()),
+	}}, whatsmeow.SendRequestExtra{ID: id})
+	if err != nil {
+		return history.IncomingEvent{}, errors.New("reaction was not acknowledged; check WhatsApp before retrying")
+	}
+	account, _ := t.sessionState()
+	return history.IncomingEvent{
+		Kind: history.ReactionEvent, AccountID: account, ChatID: jid.String(),
+		MessageID: id, EventID: "reaction:" + id, Sender: account, Timestamp: resp.Timestamp,
+		FromMe: true, ReactionToID: target.ID, Reaction: emoji,
+	}, nil
+}
+
+func (t *transport) SendStatus(ctx context.Context, text, id string) (history.StatusUpdate, error) {
+	if strings.TrimSpace(text) == "" || len([]rune(text)) > 700 || id == "" {
+		return history.StatusUpdate{}, errors.New("status text must contain 1–700 characters")
+	}
+	client, ctx, done, err := t.sendClient(ctx)
+	if err != nil {
+		return history.StatusUpdate{}, err
+	}
+	defer done()
+	resp, err := client.SendMessage(ctx, types.StatusBroadcastJID,
+		&waE2E.Message{Conversation: proto.String(text)},
+		whatsmeow.SendRequestExtra{ID: id})
+	if err != nil {
+		return history.StatusUpdate{}, errors.New("status was not acknowledged; check WhatsApp before retrying")
+	}
+	account, _ := t.sessionState()
+	return history.StatusUpdate{AccountID: account, ID: id, Sender: account, Name: "You", Body: text, CreatedAt: resp.Timestamp}, nil
+}
+
 func (t *transport) send(ctx context.Context, client *whatsmeow.Client, jid types.JID, message *waE2E.Message, body, id string) (history.IncomingEvent, error) {
 	account, _ := t.sessionState()
 	resp, err := client.SendMessage(ctx, jid, message, whatsmeow.SendRequestExtra{ID: id})
@@ -420,7 +507,11 @@ func (t *transport) handle(client *whatsmeow.Client, event any) {
 		t.emit(Event{Type: Disconnected, AccountID: account})
 		t.emit(Event{Type: Failure, AccountID: account, Err: errors.New("WhatsApp stopped the connection; inspect linked devices and client compatibility before retrying")})
 	case *events.Message:
-		t.message(account, e, "")
+		if status, ok := normalizeStatus(account, e); ok {
+			t.emit(Event{Type: Incoming, AccountID: account, Status: &status})
+		} else {
+			t.message(account, e, "")
+		}
 	case *events.HistorySync:
 		for _, conversation := range e.Data.GetConversations() {
 			jid, err := destination(conversation.GetID())

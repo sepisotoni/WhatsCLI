@@ -118,8 +118,27 @@ func TestNormalizeGroupDoesNotUseSenderAsChatTitle(t *testing.T) {
 	if !ok || event.Title != "" || event.Sender != "200@s.whatsapp.net" {
 		t.Fatalf("incorrect group: %+v", event)
 	}
+
 	event, _ = normalizeMessage("account", source, "Group name")
 	if event.Title != "Group name" {
 		t.Fatal("lost history group title")
+	}
+}
+
+func TestNormalizeStatusAndReaction(t *testing.T) {
+	source := fixtureMessage()
+	source.Info.Chat = types.StatusBroadcastJID
+	if status, ok := normalizeStatus("account", source); !ok || status.AccountID != "account" || status.Sender != source.Info.Sender.String() || status.Body != "hello 🙂" {
+		t.Fatalf("status normalization: %+v %v", status, ok)
+	}
+
+	source = fixtureMessage()
+	source.Message = &waE2E.Message{ReactionMessage: &waE2E.ReactionMessage{
+		Key:  &waCommon.MessageKey{ID: proto.String("target")},
+		Text: proto.String("👍"),
+	}}
+	event, ok := normalizeMessage("account", source, "")
+	if !ok || event.Kind != history.ReactionEvent || event.ReactionToID != "target" || event.Reaction != "👍" || event.Body != "" {
+		t.Fatalf("reaction normalization: %+v %v", event, ok)
 	}
 }

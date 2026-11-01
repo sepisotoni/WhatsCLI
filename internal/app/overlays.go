@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"whatscli/internal/ui"
+	"whatscli/internal/updater"
 )
 
 func (s *scene) modal(title string, w, h int, dim bool) ui.Rect {
@@ -51,6 +52,14 @@ func (s *scene) overlay() {
 		s.menuView()
 	case emojiScreen:
 		s.emojiView()
+	case statusesScreen:
+		s.statusesView()
+	case statusComposeScreen:
+		s.statusComposeView()
+	case statusConfirmScreen:
+		s.statusConfirmView()
+	case updateScreen:
+		s.updateView()
 	}
 }
 
@@ -126,6 +135,7 @@ func (s *scene) settingsView() {
 		{"Link / reconnect device", "Show the pairing QR and reconnect", false, true, "Open"},
 		{"Unlink this device", "Sign out; local history is kept", false, true, "Unlink"},
 		{"Send files", "Open the file browser for the current chat", false, true, "Browse"},
+		{"Check for updates", "Check GitHub and install a newer version", false, true, "Check"},
 	}
 	for i, rw := range rows {
 		y := r.Y + 2 + i*rowH
@@ -160,7 +170,51 @@ func (s *scene) settingsView() {
 		dir = "(demo: temporary, removed on exit)"
 	}
 	c.HLine(r.X+2, r.Bottom()-3, r.W-4, '─', ui.Border)
-	c.Text(r.X+3, r.Bottom()-2, ui.Truncate("WhatsCLI 0.3.0 · data: "+dir+" · ↑↓ · Enter/Space toggle · m mouse · t motion", r.W-6, "…"), ui.Faint, ui.Panel, false)
+	c.Text(r.X+3, r.Bottom()-2, ui.Truncate("WhatsCLI "+updater.BuildVersion+" · data: "+dir+" · ↑↓ · Enter/Space toggle · m mouse · t motion", r.W-6, "…"), ui.Faint, ui.Panel, false)
+}
+
+func (s *scene) updateView() {
+	m, c := s.m, s.c
+	r := s.modal("WhatsCLI Update", 66, 15, true)
+	c.Text(r.X+3, r.Y+2, "Installed revision", ui.Dim, ui.Panel, false)
+	current := m.updateVersion.Current
+	if current == "" {
+		current = "Not checked"
+	} else if len(current) > 12 {
+		current = current[:12]
+	}
+	c.Text(r.X+24, r.Y+2, current, ui.Text, ui.Panel, false)
+	c.Text(r.X+3, r.Y+3, "Latest revision", ui.Dim, ui.Panel, false)
+	latest := m.updateVersion.Latest
+	if latest == "" {
+		latest = "—"
+	} else if len(latest) > 12 {
+		latest = latest[:12]
+	}
+	c.Text(r.X+24, r.Y+3, latest, ui.Text, ui.Panel, false)
+
+	notice := m.updateNotice
+	if m.updateChecking {
+		notice = "Checking GitHub for the latest main revision…"
+	} else if m.updateRunning {
+		notice = "Updating… the installed executable will be replaced only after a successful build."
+	}
+	if notice == "" {
+		notice = "Updates are checked on demand; WhatsCLI never updates automatically."
+	}
+	c.Text(r.X+3, r.Y+6, ui.Truncate(cleanUpdateText(notice), r.W-6, "…"), ui.Text, ui.Panel, false)
+	checkLabel := " Check again "
+	checkX := r.X + 3
+	checkY := r.Bottom() - 3
+	c.Text(checkX, checkY, checkLabel, ui.AccentDark, ui.Accent, true)
+	s.add(ui.R(checkX, checkY, ui.StringWidth(checkLabel), 1), "update:check")
+	if m.updateAvailable() {
+		updateLabel := " Update now "
+		updateX := checkX + ui.StringWidth(checkLabel) + 3
+		c.Text(updateX, checkY, updateLabel, ui.AccentDark, ui.Accent, true)
+		s.add(ui.R(updateX, checkY, ui.StringWidth(updateLabel), 1), "update:run")
+	}
+	c.Text(r.X+3, r.Bottom()-1, "Enter/C check · U update · Esc back", ui.Faint, ui.Panel, false)
 }
 
 var helpRows = []struct{ k, d string }{
@@ -168,6 +222,7 @@ var helpRows = []struct{ k, d string }{
 	{"Tab", "Switch between chat list and conversation"},
 	{"↑ ↓  PgUp PgDn", "Move through chats or messages"},
 	{"Enter", "Open chat · show retained versions of a message"},
+	{"Ctrl+R  Ctrl+E", "Reply to · react to the selected message"},
 	{"Ctrl+F", "Search chats (current page)"},
 	{"e", "Archive / unarchive the selected chat"},
 	{"n", "New chat from an international phone number"},
@@ -175,8 +230,9 @@ var helpRows = []struct{ k, d string }{
 	{"", "MESSAGE BOX"},
 	{"i  or click", "Start typing · Enter sends · Ctrl+J newline · Ctrl+U clear"},
 	{"/", "Slash commands: /help /files /new /meta /search /archive /emoji …"},
+	{"/statuses", "Browse recent WhatsApp Status updates"},
 	{"//text", "Send a message that starts with a literal slash"},
-	{"a  or  +  ↥", "Open the file browser (files and folders)"},
+	{"+  or  /files", "Open the file browser (files and folders)"},
 	{"", "FILE BROWSER"},
 	{"↑↓ Enter Space", "Move · open folder · select"},
 	{"a  x  .  s  /", "Select files · clear · hidden · sort · filter"},
@@ -184,7 +240,64 @@ var helpRows = []struct{ k, d string }{
 	{"", "OTHER"},
 	{"Ctrl+P", "Command palette"},
 	{"Ctrl+C", "Quit (cancels any send)"},
-	{"", "Calls, status and stickers are not supported. Folders upload as .zip."},
+	{"", "Connection state is shown in the footer; calls and rich stickers are not supported."},
+}
+
+func (s *scene) statusesView() {
+	m, c := s.m, s.c
+	r := s.modal("WhatsApp Status", min(80, m.width-6), m.height-4, true)
+	view := ui.R(r.X+3, r.Y+2, r.W-6, r.H-6)
+	c.Text(view.X, view.Y, "Recent updates seen while this client is connected.", ui.Dim, ui.Panel, false)
+	c.Text(view.X, view.Y+1, "Updates expire after 24 hours; older server updates are not fetched.", ui.Faint, ui.Panel, false)
+	rows := max(0, (view.H-3)/3)
+	if len(m.statuses) == 0 {
+		c.Text(view.X+2, view.Y+4, "No recent status updates.", ui.Text, ui.Panel, true)
+		c.Text(view.X+2, view.Y+6, "Received updates appear here while WhatsCLI is connected.", ui.Dim, ui.Panel, false)
+	} else {
+		start := min(m.statusIndex, max(0, len(m.statuses)-rows))
+		for i := 0; i < rows && start+i < len(m.statuses); i++ {
+			status := m.statuses[start+i]
+			y := view.Y + 3 + i*3
+			bg := ui.Panel
+			if start+i == m.statusIndex {
+				bg = ui.PanelHi
+			}
+			c.Fill(ui.R(view.X, y, view.W, 2), bg)
+			name := status.Name
+			if name == "" {
+				name = status.Sender
+			}
+			c.Text(view.X+1, y, ui.Truncate(ui.SingleLine(name), view.W-4, "…"), ui.Accent, bg, true)
+			c.Text(view.X+1, y+1, ui.Truncate(ui.SingleLine(status.Body), view.W-4, "…"), ui.Text, bg, false)
+		}
+		s.scrollbar(view.Right()-1, view.Y+3, rows*3, len(m.statuses), rows, start)
+	}
+	c.Text(r.X+3, r.Bottom()-2, "↑↓ select · n post text status · Esc back", ui.Faint, ui.Panel, false)
+	s.primary(ui.R(r.Right()-22, r.Bottom()-4, 18, 3), "New status  +", "status:new", true)
+}
+
+func (s *scene) statusComposeView() {
+	m, c := s.m, s.c
+	r := s.modal("New text status", 70, 15, true)
+	c.Text(r.X+3, r.Y+2, "Share a text update with your WhatsApp Status audience.", ui.Text, ui.Panel, true)
+	c.Text(r.X+3, r.Y+3, "It will be visible for up to 24 hours. Maximum 700 characters.", ui.Dim, ui.Panel, false)
+	s.inputBox(ui.R(r.X+3, r.Y+5, r.W-6, 4), "Status", m.statusDraft)
+	c.Text(r.X+3, r.Y+10, fmt.Sprintf("%d / 700", len([]rune(m.statusDraft))), ui.Faint, ui.Panel, false)
+	c.Text(r.X+3, r.Y+11, "Enter to review · Esc to cancel", ui.Faint, ui.Panel, false)
+}
+
+func (s *scene) statusConfirmView() {
+	m, c := s.m, s.c
+	r := s.modal("Post this status?", 70, 13, true)
+	c.Text(r.X+3, r.Y+2, "This sends a text update to your WhatsApp Status audience.", ui.Text, ui.Panel, true)
+	for i, line := range ui.Wrap(ui.SafeText(m.statusDraft), r.W-8) {
+		if i >= r.H-7 {
+			break
+		}
+		c.Text(r.X+4, r.Y+4+i, line, ui.Accent, ui.Panel, false)
+	}
+	s.outline(ui.R(r.X+3, r.Bottom()-4, 14, 3), "Back", "status:back", false)
+	s.primary(ui.R(r.Right()-22, r.Bottom()-4, 18, 3), "Post status", "status:post", !m.sending)
 }
 
 func (s *scene) helpView() {
@@ -328,7 +441,7 @@ func (s *scene) emojiView() {
 	m, c := s.m, s.c
 	g := m.geo()
 	rows := (len(emojis) + emojiCols - 1) / emojiCols
-	w, h := emojiCols*4+2, rows+2
+	w, h := emojiCols*4+2, rows+3
 	ch := 5
 	if g.main.H < 24 {
 		ch = 3
@@ -341,8 +454,13 @@ func (s *scene) emojiView() {
 	s.add(ui.R(0, 0, m.width, m.height), "modal:backdrop")
 	s.add(r, "modal:body")
 	c.Box(r, ui.Accent, ui.Panel)
+	title := "Insert emoji"
+	if m.reactionTarget != nil {
+		title = "React to selected message"
+	}
+	c.Text(r.X+2, r.Y+1, title, ui.Dim, ui.Panel, false)
 	for i, e := range emojis {
-		x, y := r.X+1+(i%emojiCols)*4, r.Y+1+i/emojiCols
+		x, y := r.X+1+(i%emojiCols)*4, r.Y+2+i/emojiCols
 		id := fmt.Sprintf("emoji:%d", i)
 		bg := ui.Panel
 		if i == m.emojiIndex || s.is(id) {
@@ -371,7 +489,7 @@ func (s *scene) explorerView() {
 		border = ui.Accent
 	}
 	c.Box(up, border, ui.Panel)
-	s.center(up, "↑", ui.Accent, ui.Panel, true)
+	s.center(up, "▱↑", ui.Accent, ui.Panel, true)
 	s.add(up, "x:up")
 	pr := ui.R(up.Right()+1, r.Y+1, r.W-12, 3)
 	if e.typing {
@@ -457,6 +575,7 @@ func (s *scene) explorerView() {
 			s.add(ui.R(r.X+4, y, 3, 1), fmt.Sprintf("x:chk:%d", idx))
 		}
 	}
+	s.scrollbar(r.Right()-2, hy+1, rows, len(entries), rows, e.top)
 	if len(entries) == 0 || (len(entries) == 1 && entries[0].name == "..") {
 		c.Text(nameX, r.Y+6, "This folder is empty (or everything is hidden: press . to show hidden files).", ui.Dim, ui.Panel, false)
 	}

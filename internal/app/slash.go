@@ -13,6 +13,7 @@ type slashCmd struct{ name, usage, desc string }
 
 var slashCommands = []slashCmd{
 	{"help", "/help", "Show keyboard and command help"},
+	{"statuses", "/statuses", "Browse recent WhatsApp Status updates"},
 	{"files", "/files", "Open the file browser to upload files or folders"},
 	{"new", "/new <number>", "Open a chat with an international phone number"},
 	{"meta", "/meta", "Open the Meta AI chat"},
@@ -23,6 +24,7 @@ var slashCommands = []slashCmd{
 	{"latest", "/latest", "Jump to the newest messages"},
 	{"emoji", "/emoji", "Open the emoji picker"},
 	{"settings", "/settings", "Open settings"},
+	{"update", "/update", "Check for and install WhatsCLI updates"},
 	{"connect", "/connect", "Link or reconnect this device"},
 	{"qr", "/qr", "Show the pairing QR full screen"},
 	{"web", "/web", "Open the local web page for QR pairing"},
@@ -75,6 +77,10 @@ func (m *Model) runSlash() tea.Cmd {
 	case "help":
 		finish()
 		m.openOverlay(helpScreen)
+	case "statuses":
+		finish()
+		m.openOverlay(statusesScreen)
+		return m.loadStatuses()
 	case "files":
 		finish()
 		return m.openExplorer()
@@ -114,6 +120,9 @@ func (m *Model) runSlash() tea.Cmd {
 	case "settings":
 		finish()
 		m.openOverlay(settingsScreen)
+	case "update":
+		finish()
+		return m.openUpdate()
 	case "connect":
 		finish()
 		m.active = pairingScreen

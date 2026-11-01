@@ -18,13 +18,13 @@ No WhatsApp API key is needed for the application or synthetic tests. Dependency
 
 ## Plaintext history and deliberate retention
 
-Conversation titles, identifiers, sender metadata, message bodies, timestamps, delivery outcomes, received revisions, and deletion markers are stored without application-level encryption. Session and history are separate databases, but both belong to the execution host.
+Conversation titles, identifiers, sender metadata, message bodies, timestamps, delivery outcomes, received revisions, and deletion markers are stored without application-level encryption. Session and history are separate databases, but both belong to the execution host. Recent text statuses are held in a separate plaintext cache and pruned on a new status write or when the status list is opened; an idle client may retain expired rows until then.
 
 - An edit preserves earlier received text, not just the newest body.
 - A revoke/deletion marker preserves received plaintext and revisions; it is **not erasure**. The UI explicitly marks locally retained deletions and exposes retained versions.
 - Only content actually supplied to this client can be retained. Unseen originals, missing revisions, or expired/unavailable content cannot be reconstructed.
 - Supported ephemeral/view-once wrappers are normalized into ordinary retained text or placeholders. There is no local disappearing-message expiry or view-once enforcement; media are not downloaded automatically.
-- Logging out retains local history. There is no retention deadline, purge UI, secure-erasure feature, or encrypted database.
+- Logging out retains local message history. Messages have no retention deadline; there is no history purge UI, secure-erasure feature, or encrypted database.
 
 Use an encrypted disk/home directory and protected backups; assess whether retaining other people's edited, revoked, or disappearing content is appropriate. WhatsApp transport encryption does not encrypt this local history. SQLite WAL/journal files, backups, snapshots, swap, and terminal records can retain content too. Deleting one database file is not a secure-erasure procedure.
 

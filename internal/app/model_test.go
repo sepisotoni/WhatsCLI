@@ -76,6 +76,30 @@ func TestPaletteFiltersUnicodeAndRunsSettings(t *testing.T) {
 	}
 }
 
+func TestUpdateCommandIsOnDemandAndDisabledInDemo(t *testing.T) {
+	m := demoFixture(t)
+	m.composer, m.composing = "/update", true
+	cmd := m.runSlash()
+	if cmd != nil || m.active != updateScreen || m.updateNotice != "Update checks are disabled in demo mode." {
+		t.Fatalf("unexpected demo update behavior: active=%v notice=%q cmd=%v", m.active, m.updateNotice, cmd != nil)
+	}
+	m, _ = press(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.active != chatScreen && m.active != inboxScreen {
+		t.Fatalf("update overlay did not close: %v", m.active)
+	}
+}
+
+func TestUpdateCannotSkipAgreement(t *testing.T) {
+	m := New(nil)
+	m.active = welcomeScreen
+	if cmd := m.openUpdate(); cmd != nil {
+		t.Fatal("update started before agreement")
+	}
+	if m.active != welcomeScreen || !m.noticeErr {
+		t.Fatal("update action bypassed the welcome/agreement flow")
+	}
+}
+
 func TestComposerDoesNotTreatTextAsShortcuts(t *testing.T) {
 	m := New(nil)
 	m.active = chatScreen

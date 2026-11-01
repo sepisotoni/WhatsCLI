@@ -11,14 +11,14 @@ import (
 )
 
 const (
-	AvatarW = 6 // cells
-	AvatarH = 3 // cells (6x6 half-block pixels, i.e. a square)
+	AvatarW = 8 // cells
+	AvatarH = 3 // cells (8x6 half-block pixels, approximately square)
 )
 
-// Photo is a profile picture reduced to 6x6 pixels.
-type Photo struct{ px [6][6]Color }
+// Photo is a profile picture reduced to 8x6 half-block pixels.
+type Photo struct{ px [6][8]Color }
 
-func PhotoFromColors(px [6][6]Color) *Photo { return &Photo{px} }
+func PhotoFromColors(px [6][8]Color) *Photo { return &Photo{px} }
 
 // DecodePhoto center-crops and box-averages an image. Size is checked first so a
 // hostile image cannot cause a decompression bomb.
@@ -39,11 +39,11 @@ func DecodePhoto(data []byte) (*Photo, error) {
 	x0, y0 := b.Min.X+(b.Dx()-side)/2, b.Min.Y+(b.Dy()-side)/2
 	p := &Photo{}
 	for py := 0; py < 6; py++ {
-		for pxl := 0; pxl < 6; pxl++ {
-			sx0, sx1 := x0+pxl*side/6, x0+(pxl+1)*side/6
+		for pxl := 0; pxl < 8; pxl++ {
+			sx0, sx1 := x0+pxl*side/8, x0+(pxl+1)*side/8
 			sy0, sy1 := y0+py*side/6, y0+(py+1)*side/6
 			var r, g, bl, n uint32
-			step := max(1, (sx1-sx0)/6)
+			step := max(1, (sx1-sx0)/8)
 			for y := sy0; y < max(sy1, sy0+1); y += step {
 				for x := sx0; x < max(sx1, sx0+1); x += step {
 					cr, cg, cb, _ := img.At(x, y).RGBA()
@@ -83,8 +83,8 @@ func Initials(name string) string {
 }
 
 func inCircle(x, y int) bool {
-	dx, dy := float64(x)+.5-3, float64(y)+.5-3
-	return dx*dx+dy*dy <= 9.3
+	dx, dy := float64(x)+.5-4, float64(y)+.5-3
+	return dx*dx/16+dy*dy/9 <= 1.05
 }
 
 // DrawAvatar draws a round avatar: the photo when present, otherwise a tinted
@@ -110,8 +110,8 @@ func DrawAvatar(c *Canvas, x, y int, name string, photo *Photo, bg Color) {
 			top, bottom := inCircle(col, 2*row), inCircle(col, 2*row+1)
 			switch {
 			case top && bottom:
-				if photo == nil && row == 1 && col >= 2 && col-2 < len(letters) {
-					c.Put(x+col, y+row, letters[col-2], Accent, fill, true)
+				if photo == nil && row == 1 && col >= 3 && col-3 < len(letters) {
+					c.Put(x+col, y+row, letters[col-3], Accent, fill, true)
 				} else {
 					c.Put(x+col, y+row, '▀', pixel(col, 2*row), pixel(col, 2*row+1), false)
 				}

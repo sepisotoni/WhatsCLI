@@ -55,6 +55,15 @@ func (r *Runtime) notify() {
 	}
 }
 
+func (r *Runtime) storageFailure(message string) error {
+	r.mu.Lock()
+	r.state.Error = message
+	r.state.StoreFailed = true
+	r.mu.Unlock()
+	r.notify()
+	return errors.New(message)
+}
+
 func (r *Runtime) Connect() error {
 	r.mu.Lock()
 	if !r.consent || r.closing {
@@ -88,10 +97,16 @@ func (r *Runtime) Connect() error {
 func (r *Runtime) ingest() {
 	defer close(r.done)
 	for event := range r.Client.Events() {
-		if event.Type == messaging.Incoming && event.Message != nil {
-			if err := r.Repo.ApplyEvent(r.ctx, *event.Message); err != nil {
+		if event.Type == messaging.Incoming && (event.Message != nil || event.Status != nil) {
+			var err error
+			if event.Message != nil {
+				err = r.Repo.ApplyEvent(r.ctx, *event.Message)
+			} else {
+				err = r.Repo.SaveStatus(r.ctx, *event.Status)
+			}
+			if err != nil {
 				r.mu.Lock()
-				r.state.Error = "Could not save an incoming event. Stop and check local storage before continuing."
+				r.state.Error = "Could not save incoming data. Stop and check local storage before continuing."
 				r.state.StoreFailed = true
 				r.mu.Unlock()
 			}
@@ -139,6 +154,42 @@ func (r *Runtime) ingest() {
 }
 
 func (r *Runtime) Send(ctx context.Context, chat, text, path string) error {
+	return r.send(ctx, chat, text, path, nil)
+}
+
+func (r *Runtime) SendReply(ctx context.Context, chat, text string, target history.Message) error {
+	return r.send(ctx, chat, text, "", &target)
+}
+
+func (r *Runtime) React(ctx context.Context, chat string, target history.Message, emoji string) error {
+	r.mu.Lock()
+	if r.closing || !r.consent {
+		r.mu.Unlock()
+		return errors.New("application is closing or consent is missing")
+	}
+	r.ops.Add(1)
+	r.mu.Unlock()
+	defer r.ops.Done()
+	state := r.Snapshot()
+	if !state.Online || state.AccountID == "" || state.StoreFailed {
+		return errors.New("reaction unavailable: connect first and resolve any storage errors")
+	}
+	client, ok := r.Client.(messaging.ReactionClient)
+	if !ok {
+		return errors.New("reactions are unavailable in this transport")
+	}
+	event, err := client.SendReaction(ctx, chat, target, emoji, r.Client.NewMessageID())
+	if err != nil {
+		return err
+	}
+	if err := r.Repo.ApplyEvent(ctx, event); err != nil {
+		return r.storageFailure("reaction was sent, but local history could not be updated")
+	}
+	r.notify()
+	return nil
+}
+
+func (r *Runtime) send(ctx context.Context, chat, text, path string, reply *history.Message) error {
 	r.mu.Lock()
 	if r.closing || !r.consent {
 		r.mu.Unlock()
@@ -151,15 +202,25 @@ func (r *Runtime) Send(ctx context.Context, chat, text, path string) error {
 	if !state.Online || state.AccountID == "" || state.StoreFailed {
 		return errors.New("send unavailable: connect first and resolve any storage errors")
 	}
+	if reply != nil {
+		if _, ok := r.Client.(messaging.ReplyClient); !ok {
+			return errors.New("reply sending is unavailable in this transport")
+		}
+	}
 	id := r.Client.NewMessageID()
 	pending := history.IncomingEvent{Kind: history.MessageEvent, AccountID: state.AccountID, ChatID: chat, MessageID: id, EventID: "outgoing:" + id, Sender: "me", Body: text, Status: "pending", Timestamp: time.Now().UTC(), FromMe: true}
+	if reply != nil {
+		pending.ReplyToID, pending.ReplySender, pending.ReplyBody = reply.ID, reply.Sender, reply.Body
+	}
 	if err := r.Repo.ApplyEvent(ctx, pending); err != nil {
 		return errors.New("could not save outgoing message; nothing sent")
 	}
 	r.notify()
 	var result history.IncomingEvent
 	var err error
-	if path == "" {
+	if reply != nil {
+		result, err = r.Client.(messaging.ReplyClient).SendReply(ctx, chat, text, id, *reply)
+	} else if path == "" {
 		result, err = r.Client.SendText(ctx, chat, text, id)
 	} else {
 		result, err = r.Client.SendFile(ctx, chat, path, id)
@@ -188,6 +249,35 @@ func (r *Runtime) Send(ctx context.Context, chat, text, path string) error {
 	if err != nil {
 		return errors.New("delivery not confirmed; check WhatsApp before retrying to avoid a duplicate")
 	}
+	return nil
+}
+
+func (r *Runtime) PostStatus(ctx context.Context, text string) error {
+	r.mu.Lock()
+	if r.closing || !r.consent {
+		r.mu.Unlock()
+		return errors.New("application is closing or consent is missing")
+	}
+	r.ops.Add(1)
+	r.mu.Unlock()
+	defer r.ops.Done()
+	state := r.Snapshot()
+	if !state.Online || state.AccountID == "" || state.StoreFailed {
+		return errors.New("status posting unavailable: connect first and resolve any storage errors")
+	}
+	client, ok := r.Client.(messaging.StatusClient)
+	if !ok {
+		return errors.New("status posting is unavailable in this transport")
+	}
+	id := r.Client.NewMessageID()
+	status, err := client.SendStatus(ctx, text, id)
+	if err != nil {
+		return err
+	}
+	if err := r.Repo.SaveStatus(ctx, status); err != nil {
+		return r.storageFailure("status was sent, but its local history could not be saved")
+	}
+	r.notify()
 	return nil
 }
 

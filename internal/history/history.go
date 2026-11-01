@@ -15,6 +15,7 @@ const (
 	EditEvent     EventKind = "edit"
 	DeleteEvent   EventKind = "delete"
 	DeliveryEvent EventKind = "delivery"
+	ReactionEvent EventKind = "reaction"
 )
 
 type IncomingEvent struct {
@@ -22,6 +23,13 @@ type IncomingEvent struct {
 	AccountID, ChatID, Title, MessageID, EventID, Sender, Body, Status string
 	Timestamp                                                          time.Time
 	FromMe                                                             bool
+	ReplyToID, ReplySender, ReplyBody                                  string
+	ReactionToID, Reaction                                             string
+}
+
+type StatusUpdate struct {
+	AccountID, ID, Sender, Name, Body string
+	CreatedAt                         time.Time
 }
 
 type Cursor struct {
@@ -58,6 +66,15 @@ type Message struct {
 	FromMe         bool
 	Edited         bool
 	Status         string
+	ReplyToID      string
+	ReplySender    string
+	ReplyBody      string
+	Reactions      []MessageReaction
+}
+
+type MessageReaction struct {
+	Sender string
+	Emoji  string
 }
 
 type Revision struct {
@@ -77,6 +94,8 @@ type Repository interface {
 	ListMessages(context.Context, string, int) ([]Message, error)
 	ListRevisions(context.Context, string) ([]Revision, error)
 	ApplyEvent(context.Context, IncomingEvent) error
+	SaveStatus(context.Context, StatusUpdate) error
+	Statuses(context.Context, string, time.Time, int) ([]StatusUpdate, error)
 	Conversations(context.Context, string, *Cursor, int) ([]Conversation, error)
 	Messages(context.Context, string, string, *Cursor, int) ([]Message, error)
 	Revisions(context.Context, string, string, string, int, int) ([]Revision, error)

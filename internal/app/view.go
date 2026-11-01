@@ -52,7 +52,7 @@ func (m Model) hitAt(x, y int) string {
 func (m Model) isOverlay() bool {
 	switch m.active {
 	case settingsScreen, helpScreen, commandScreen, revisionsScreen, attachmentScreen, confirmFileScreen,
-		logoutScreen, newChatScreen, explorerScreen, emojiScreen, menuScreen:
+		logoutScreen, newChatScreen, explorerScreen, emojiScreen, menuScreen, statusesScreen, statusComposeScreen, statusConfirmScreen, updateScreen:
 		return true
 	}
 	return false

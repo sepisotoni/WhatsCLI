@@ -18,6 +18,7 @@ import (
 	"whatscli/internal/messaging"
 	"whatscli/internal/privatefs"
 	"whatscli/internal/ui"
+	"whatscli/internal/updater"
 )
 
 func main() {
@@ -40,7 +41,7 @@ func run() error {
 	colors := flag.String("colors", "auto", "colour depth: auto, truecolor or 256")
 	flag.Parse()
 	if *version {
-		fmt.Println("WhatsCLI 0.3.0")
+		fmt.Println("WhatsCLI " + updater.BuildVersion)
 		return nil
 	}
 	profile, ok := ui.ParseProfile(*colors, os.Getenv)

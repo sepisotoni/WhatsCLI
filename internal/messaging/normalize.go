@@ -7,6 +7,7 @@ import (
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/proto/waWeb"
+	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 
 	"whatscli/internal/history"
@@ -19,6 +20,9 @@ func normalizeMessage(account string, source *events.Message, title string) (his
 		return history.IncomingEvent{}, false
 	}
 	chat := source.Info.Chat.ToNonAD()
+	if chat == types.StatusBroadcastJID {
+		return history.IncomingEvent{}, false
+	}
 	if !supportedChat(chat) {
 		return history.IncomingEvent{}, false
 	}
@@ -66,10 +70,25 @@ func normalizeMessage(account string, source *events.Message, title string) (his
 	if event.MessageID == "" {
 		return history.IncomingEvent{}, false
 	}
+	if reaction := message.GetReactionMessage(); reaction != nil {
+		if reaction.GetKey().GetID() == "" {
+			return history.IncomingEvent{}, false
+		}
+		event.Kind = history.ReactionEvent
+		event.ReactionToID = reaction.GetKey().GetID()
+		event.Reaction = reaction.GetText()
+	}
 	if event.Kind != history.DeleteEvent {
-		event.Body = messageBody(message)
-		if message == nil && source.SourceWebMsg != nil {
-			event.Body = "[unavailable message or system event]"
+		if event.Kind != history.ReactionEvent {
+			event.Body = messageBody(message)
+			if ctx := messageContextInfo(message); ctx != nil && ctx.GetStanzaID() != "" {
+				event.ReplyToID = ctx.GetStanzaID()
+				event.ReplySender = ctx.GetParticipant()
+				event.ReplyBody = messageBody(ctx.GetQuotedMessage())
+			}
+			if message == nil && source.SourceWebMsg != nil {
+				event.Body = "[unavailable message or system event]"
+			}
 		}
 	}
 	switch event.Kind {
@@ -81,8 +100,51 @@ func normalizeMessage(account string, source *events.Message, title string) (his
 		event.EventID = fmt.Sprintf("edit:%s:%d:%x", event.MessageID, event.Timestamp.UnixMilli(), sha256.Sum256([]byte(event.Body)))
 	case history.DeleteEvent:
 		event.EventID = fmt.Sprintf("delete:%s:%d", event.MessageID, event.Timestamp.UnixMilli())
+	case history.ReactionEvent:
+		event.EventID = fmt.Sprintf("reaction:%s:%d:%s", event.MessageID, event.Timestamp.UnixMilli(), event.Reaction)
 	}
 	return event, true
+}
+
+func normalizeStatus(account string, source *events.Message) (history.StatusUpdate, bool) {
+	if source == nil || account == "" || source.Info.Chat.ToNonAD() != types.StatusBroadcastJID || source.Info.ID == "" || source.Info.Sender.IsEmpty() {
+		return history.StatusUpdate{}, false
+	}
+	message := source.RawMessage
+	if message == nil {
+		message = source.Message
+	}
+	message, _ = unwrap(message)
+	return history.StatusUpdate{
+		AccountID: account,
+		ID:        source.Info.ID,
+		Sender:    source.Info.Sender.ToNonAD().String(),
+		Name:      source.Info.PushName,
+		Body:      messageBody(message),
+		CreatedAt: source.Info.Timestamp.UTC(),
+	}, true
+}
+
+func messageContextInfo(message *waE2E.Message) *waE2E.ContextInfo {
+	if message == nil {
+		return nil
+	}
+	switch {
+	case message.GetExtendedTextMessage() != nil:
+		return message.GetExtendedTextMessage().GetContextInfo()
+	case message.GetImageMessage() != nil:
+		return message.GetImageMessage().GetContextInfo()
+	case message.GetVideoMessage() != nil:
+		return message.GetVideoMessage().GetContextInfo()
+	case message.GetDocumentMessage() != nil:
+		return message.GetDocumentMessage().GetContextInfo()
+	case message.GetAudioMessage() != nil:
+		return message.GetAudioMessage().GetContextInfo()
+	case message.GetStickerMessage() != nil:
+		return message.GetStickerMessage().GetContextInfo()
+	default:
+		return nil
+	}
 }
 
 func unwrap(message *waE2E.Message) (*waE2E.Message, bool) {

@@ -86,14 +86,14 @@ func SeedDemo(ctx context.Context, repo history.Repository) error {
 // demoPhoto is a synthetic profile picture so the photo path is exercised
 // without any network access.
 func demoPhoto() *ui.Photo {
-	var px [6][6]ui.Color
+	var px [6][8]ui.Color
 	for y := 0; y < 6; y++ {
-		for x := 0; x < 6; x++ {
+		for x := 0; x < 8; x++ {
 			v := uint32(0x1A + y*7 + x*2)
 			px[y][x] = ui.Hex(v<<16 | (v+6)<<8 | (v + 14))
 		}
 	}
-	for x := 1; x < 5; x++ {
+	for x := 2; x < 6; x++ {
 		px[3][x] = ui.Hex(0xB9C3CC)
 		px[4][x] = ui.Hex(0x090B0E)
 	}

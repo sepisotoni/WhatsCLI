@@ -43,6 +43,14 @@ func (m *Model) key(key tea.KeyMsg) tea.Cmd {
 		return m.emojiKey(key)
 	case menuScreen:
 		return m.menuKey(key)
+	case statusesScreen:
+		return m.statusesKey(key)
+	case statusComposeScreen:
+		return m.statusComposeKey(key)
+	case statusConfirmScreen:
+		return m.statusConfirmKey(key)
+	case updateScreen:
+		return m.updateKey(key)
 	}
 	if m.composing {
 		return m.compose(key)
@@ -109,7 +117,7 @@ func (m *Model) key(key tea.KeyMsg) tea.Cmd {
 			if m.chatID == "" {
 				m.active = inboxScreen
 			}
-		case settingsScreen, helpScreen:
+		case settingsScreen, helpScreen, updateScreen:
 			m.leaveOverlay()
 		case pairingScreen:
 			if m.fullscreen {
@@ -184,6 +192,19 @@ func (m *Model) key(key tea.KeyMsg) tea.Cmd {
 			m.toggleArchive()
 		}
 	case chatScreen:
+		if k == "ctrl+r" && m.msgFocus && m.messageIndex >= 0 && m.messageIndex < len(m.messages) && !m.sending {
+			target := m.messages[m.messageIndex]
+			m.replyTo = &target
+			m.composing, m.msgFocus = true, false
+			return nil
+		}
+		if k == "ctrl+e" && m.msgFocus && m.messageIndex >= 0 && m.messageIndex < len(m.messages) && !m.sending {
+			target := m.messages[m.messageIndex]
+			m.reactionTarget = &target
+			m.emojiIndex = 10
+			m.active = emojiScreen
+			return nil
+		}
 		switch k {
 		case "up":
 			m.msgFocus = true
@@ -247,15 +268,63 @@ func (m *Model) key(key tea.KeyMsg) tea.Cmd {
 		m.scrollKey(k)
 	case helpScreen:
 		m.scrollKey(k)
+	case statusesScreen, statusComposeScreen, statusConfirmScreen:
+		return nil
 	case confirmFileScreen:
 		if k == "enter" && !m.sending && !m.uploading {
 			return m.startUpload()
 		}
-		m.scrollKey(k)
 	case logoutScreen:
 		if k == "enter" {
 			return m.logout()
 		}
+	}
+	return nil
+}
+
+func (m *Model) statusesKey(key tea.KeyMsg) tea.Cmd {
+	switch key.String() {
+	case "esc":
+		m.leaveOverlay()
+	case "up":
+		m.statusIndex = max(0, m.statusIndex-1)
+	case "down":
+		m.statusIndex = min(max(0, len(m.statuses)-1), m.statusIndex+1)
+	case "n":
+		m.statusDraft = ""
+		m.active = statusComposeScreen
+	}
+	return nil
+}
+
+func (m *Model) statusComposeKey(key tea.KeyMsg) tea.Cmd {
+	switch key.String() {
+	case "esc":
+		m.active = statusesScreen
+	case "backspace":
+		m.statusDraft = dropRune(m.statusDraft)
+	case "ctrl+u":
+		m.statusDraft = ""
+	case "enter":
+		if strings.TrimSpace(m.statusDraft) == "" {
+			m.setNotice("Type a status before previewing it.", true)
+		} else {
+			m.active = statusConfirmScreen
+		}
+	default:
+		if isText(key) && len([]rune(m.statusDraft)) < 700 {
+			m.statusDraft += ui.SingleLine(string(key.Runes))
+		}
+	}
+	return nil
+}
+
+func (m *Model) statusConfirmKey(key tea.KeyMsg) tea.Cmd {
+	switch key.String() {
+	case "esc":
+		m.active = statusComposeScreen
+	case "enter":
+		return m.postStatus()
 	}
 	return nil
 }
@@ -391,6 +460,9 @@ func (m *Model) runCommand(command string) tea.Cmd {
 		m.openOverlay(helpScreen)
 	case "settings":
 		m.openOverlay(settingsScreen)
+	case "statuses":
+		m.openOverlay(statusesScreen)
+		return m.loadStatuses()
 	case "conversations":
 		m.active = inboxScreen
 		m.trail = nil
@@ -407,8 +479,10 @@ func (m *Model) runCommand(command string) tea.Cmd {
 		return m.openMetaAI()
 	case "logout":
 		m.active = logoutScreen
-	case "files", "attach":
+	case "files":
 		return m.openExplorer()
+	case "update":
+		return m.openUpdate()
 	}
 	return nil
 }
@@ -583,6 +657,7 @@ func (m *Model) openChat() tea.Cmd {
 	}
 	m.chatID, m.chatTitle, m.messages = c.ID, c.Title, nil
 	m.messageBefore, m.messageIndex, m.msgTop, m.msgFocus = nil, 0, 0, false
+	m.replyTo, m.reactionTarget = nil, nil
 	return m.loadMessages(nil)
 }
 
@@ -597,6 +672,9 @@ func (m *Model) compose(key tea.KeyMsg) tea.Cmd {
 		}
 	case "esc":
 		m.composing = false
+		if m.composer == "" {
+			m.replyTo = nil
+		}
 	case "tab":
 		if len(slash) > 0 {
 			m.composer = "/" + slash[min(m.slashIndex, len(slash)-1)].name + " "
@@ -634,7 +712,7 @@ func (m *Model) compose(key tea.KeyMsg) tea.Cmd {
 
 // ---- settings ----
 
-const settingCount = 9
+const settingCount = 10
 
 func (m *Model) activateSetting(i int) tea.Cmd {
 	settings := m.settings
@@ -661,6 +739,8 @@ func (m *Model) activateSetting(i int) tea.Cmd {
 	case 8: // open the file browser
 		m.leaveOverlay()
 		return m.openExplorer()
+	case 9:
+		return m.openUpdate()
 	default:
 		return nil
 	}
@@ -717,7 +797,12 @@ func (m *Model) emojiKey(key tea.KeyMsg) tea.Cmd {
 	switch key.String() {
 	case "esc":
 		m.active = chatScreen
-		m.composing = true
+		if m.reactionTarget != nil {
+			m.reactionTarget = nil
+			m.composing = false
+		} else {
+			m.composing = true
+		}
 	case "left":
 		m.emojiIndex = max(0, m.emojiIndex-1)
 	case "right":
@@ -727,19 +812,23 @@ func (m *Model) emojiKey(key tea.KeyMsg) tea.Cmd {
 	case "down":
 		m.emojiIndex = min(len(emojis)-1, m.emojiIndex+emojiCols)
 	case "enter", " ":
-		m.insertEmoji(m.emojiIndex)
+		return m.insertEmoji(m.emojiIndex)
 	}
 	return nil
 }
 
-func (m *Model) insertEmoji(i int) {
+func (m *Model) insertEmoji(i int) tea.Cmd {
 	if i < 0 || i >= len(emojis) {
-		return
+		return nil
+	}
+	if m.reactionTarget != nil {
+		return m.react(emojis[i])
 	}
 	if text := m.composer + emojis[i]; len([]rune(text)) <= 4096 && !m.sending {
 		m.composer = text
 	}
 	m.active, m.composing = chatScreen, true
+	return nil
 }
 
 // submit runs a slash command or sends the draft (shared by Enter and the send button).
@@ -753,6 +842,9 @@ func (m *Model) submit() tea.Cmd {
 	text := m.composer
 	if strings.HasPrefix(text, "//") {
 		text = text[1:] // "//" sends a message that begins with a literal slash
+	}
+	if m.replyTo != nil {
+		return m.sendWithReply(text, "", m.replyTo)
 	}
 	return m.send(text, "")
 }

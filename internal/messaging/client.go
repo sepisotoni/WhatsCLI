@@ -27,6 +27,7 @@ type Event struct {
 	Code      string
 	Err       error
 	Message   *history.IncomingEvent
+	Status    *history.StatusUpdate
 }
 
 type Client interface {
@@ -37,4 +38,16 @@ type Client interface {
 	NewMessageID() string
 	SendText(context.Context, string, string, string) (history.IncomingEvent, error)
 	SendFile(context.Context, string, string, string) (history.IncomingEvent, error)
+}
+
+type StatusClient interface {
+	SendStatus(context.Context, string, string) (history.StatusUpdate, error)
+}
+
+type ReplyClient interface {
+	SendReply(context.Context, string, string, string, history.Message) (history.IncomingEvent, error)
+}
+
+type ReactionClient interface {
+	SendReaction(context.Context, string, history.Message, string, string) (history.IncomingEvent, error)
 }

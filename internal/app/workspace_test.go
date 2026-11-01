@@ -219,7 +219,7 @@ func TestMouseHoverClickAndWheelUseRenderedRegions(t *testing.T) {
 		t.Fatalf("no region %q", id)
 		return
 	}
-	for _, id := range []string{"rail:new", "rail:files", "rail:settings", "search", "chat:2", "plus", "emoji", "send", "head:more", "compose", "archive"} {
+	for _, id := range []string{"rail:new", "rail:settings", "search", "chat:2", "plus", "emoji", "send", "head:more", "compose", "archive"} {
 		x, y := find(id)
 		if got := m.hitAt(x, y); got != id {
 			t.Fatalf("%s: cell %d,%d hit %q", id, x, y, got)
@@ -271,6 +271,64 @@ func TestDemoSendOnlyWritesSyntheticHistory(t *testing.T) {
 	}
 	if m.runtime.Snapshot().Online {
 		t.Fatal("demo unexpectedly online")
+	}
+}
+
+func TestReplyAndReactFromSelectedMessage(t *testing.T) {
+	m := demoFixture(t)
+	m.active, m.msgFocus, m.messageIndex = chatScreen, true, 1
+	target := m.messages[m.messageIndex]
+	m, _ = press(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	if !m.composing || m.replyTo == nil || m.replyTo.ID != target.ID {
+		t.Fatal("Ctrl+R did not set the selected reply target")
+	}
+	m.composer = "reply from terminal"
+	if cmd := m.submit(); cmd == nil {
+		t.Fatal("reply send command was not created")
+	} else {
+		next, _ := m.Update(cmd())
+		m = next.(Model)
+	}
+	messages, err := m.repo.Messages(context.Background(), m.account, m.chatID, nil, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundReply := false
+	for _, message := range messages {
+		if message.Body == "reply from terminal" {
+			foundReply = message.ReplyToID == target.ID && message.ReplyBody == target.Body
+		}
+	}
+	if !foundReply {
+		t.Fatal("reply context did not persist")
+	}
+
+	m.messageIndex, m.msgFocus = 1, true
+	target = m.messages[m.messageIndex]
+	m, _ = press(m, tea.KeyMsg{Type: tea.KeyCtrlE})
+	if m.active != emojiScreen || m.reactionTarget == nil || m.reactionTarget.ID != target.ID {
+		t.Fatal("Ctrl+E did not open reactions for the selected message")
+	}
+	m, cmd := press(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("reaction command was not created")
+	}
+	next, _ := m.Update(cmd())
+	m = next.(Model)
+	messages, err = m.repo.Messages(context.Background(), m.account, m.chatID, nil, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundReaction := false
+	for _, message := range messages {
+		if message.ID == target.ID {
+			for _, reaction := range message.Reactions {
+				foundReaction = foundReaction || reaction.Sender == "You" && reaction.Emoji == "👍"
+			}
+		}
+	}
+	if !foundReaction {
+		t.Fatal("reaction was not projected onto the selected message")
 	}
 }
 
@@ -359,7 +417,7 @@ func TestSettingsRowsAreWiredAndPersistNothingInDemo(t *testing.T) {
 		t.Fatalf("toggles not applied: %+v", s)
 	}
 	view := plain(m)
-	for _, text := range []string{"Mouse support", "Reduced motion", "Profile photos", "Chat wallpaper", "12-hour clock", "Terminal bell", "Unlink this device"} {
+	for _, text := range []string{"Mouse support", "Reduced motion", "Profile photos", "Chat wallpaper", "12-hour clock", "Terminal bell", "Unlink this device", "Check for updates"} {
 		if !strings.Contains(view, text) {
 			t.Errorf("settings missing %q", text)
 		}

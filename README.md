@@ -10,7 +10,7 @@ A keyboard-first Go terminal client for WhatsApp with a neon, fully filled true-
 curl -fsSL https://raw.githubusercontent.com/sepisotoni/WhatsCLI/main/install.sh | sh
 ```
 
-Requires Git and Go (the pinned 1.27.2 toolchain downloads automatically). It installs into **`~/whatscli`**, builds `~/whatscli/bin/whatscli`, links `~/.local/bin/whatscli`, never needs sudo, never edits your shell profile, and refuses to overwrite an existing checkout. The URL works once this branch is on `main`; nothing here pushes to GitHub. In a checkout use `sh install.sh --local`.
+Requires Git, curl, and Go (the pinned 1.27.2 toolchain downloads automatically). On first run it installs the latest stable GitHub Release into **`~/whatscli`**, builds `~/whatscli/bin/whatscli`, links `~/.local/bin/whatscli`, never needs sudo, and never edits your shell profile. Re-running the same `curl | sh` command updates an existing clean WhatsCLI checkout from the expected GitHub origin; other existing directories are not overwritten. Pin a release with `WHATSCLI_REF=v1.2.3`, or install the development branch with `WHATSCLI_REF=main`. In a checkout use `sh install.sh --local`.
 
 Try the real UI safely first:
 
@@ -18,6 +18,8 @@ Try the real UI safely first:
 whatscli -demo       # synthetic chats, disposable state, never touches WhatsApp
 whatscli             # live: consent screen, then the linked-device QR
 ```
+
+Update an installed checkout by rerunning the install command above, using `/update` (or **Check for updates** in Settings), or running `sh ~/whatscli/install.sh --update`. In-app checks are never automatic: WhatsCLI compares the installed semantic version with the latest stable GitHub Release and offers the update only when that release is newer. Updates require a clean checkout with the expected GitHub origin; the installer checks out the selected release and replaces the binary only after a successful build. Updating does not skip or alter the usual welcome, agreement, or device-pairing flow. The root `VERSION` file is the version source; pushing a matching `vX.Y.Z` tag runs the release workflow and publishes GitHub release notes.
 
 ## The interface
 
@@ -41,21 +43,23 @@ Everything works without a mouse. Mouse support is optional (Settings): hover hi
 | Context | Keys |
 | --- | --- |
 | Global | `Ctrl+C` quit · `Ctrl+P` palette · `Tab` list ↔ chat · `Ctrl+F` search · `n` new chat · `e` archive · `s` settings · `?` help |
-| Chat | `i` type · `/` slash command · `a` file browser · `Enter` message versions · `p`/`r` older/latest |
+| Chat | `↑`/`↓` select message · `Ctrl+R` reply · `Ctrl+E` react · `i` type · `a` file browser · `Enter` message versions · `p`/`r` older/latest |
 | Message box | `Enter` send · `Ctrl+J` newline · `Ctrl+U` clear · `Esc` stop typing |
 | Link screen | `f` full screen · `h` web QR · `r` retry · `Esc` back |
 
 ### Slash commands
 
-Type `/` in a chat for a live list (↑↓ choose, `Tab` completes): `/help /files /new <number> /meta /search <text> /archive /versions /older /latest /emoji /settings /connect /qr /web /mouse /clear /logout /quit`. Commands never send anything to WhatsApp. To send a message that really starts with a slash, begin it with `//`.
+Type `/` in a chat for a live list (↑↓ choose, `Tab` completes): `/help /statuses /files /new <number> /meta /search <text> /archive /versions /older /latest /emoji /settings /update /connect /qr /web /mouse /clear /logout /quit`. Commands never send anything to WhatsApp. To send a message that really starts with a slash, begin it with `//`.
+
+Replies quote the selected message; reactions are attached to the selected message. Both require a selected message (`↑`/`↓`), then `Ctrl+R` or `Ctrl+E`. The footer shows WhatsCLI's connection state, not your personal WhatsApp online presence. `/statuses` shows updates received while WhatsCLI is connected and can post text statuses. Older status updates are not fetched, and media stories are not downloaded.
 
 ### Files and folders
 
-`+`, the ↥ icon, `a`, `/files` or the rail's ⤓ open a built-in file browser: browse, filter (`/`), sort (`s`), show hidden (`.`), type a path (`Ctrl+L`), multi-select files **and folders** (`Space`, `a`), then upload (`u`). WhatsApp has no folder message, so folders are zipped on the fly (symlinks are skipped) and sent as `.zip` documents. Every file type is sent as a document, up to **64 MiB** each, one at a time, stopping at the first failure. Paths always refer to the machine running WhatsCLI; over SSH copy files there first.
+The `+` control, `a`, or `/files` opens the built-in file browser: browse, filter (`/`), sort (`s`), show hidden (`.`), type a path (`Ctrl+L`), multi-select files **and folders** (`Space`, `a`), then upload (`u`). WhatsApp has no folder message, so folders are zipped on the fly (symlinks are skipped) and sent as `.zip` documents. Every file type is sent as a document, up to **64 MiB** each, one at a time, stopping at the first failure. Paths always refer to the machine running WhatsCLI; over SSH copy files there first.
 
 ### Settings
 
-Mouse support, reduced motion, profile photos, chat wallpaper, 12-hour clock, terminal bell, link/reconnect, unlink (confirmed), and the file browser. Every row does something.
+Mouse support, reduced motion, profile photos, chat wallpaper, 12-hour clock, terminal bell, link/reconnect, unlink (confirmed), the file browser, and on-demand update checking.
 
 ## Meta AI
 

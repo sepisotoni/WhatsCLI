@@ -119,8 +119,6 @@ func (m *Model) activate(id string, double bool) tea.Cmd {
 	case "rail:new":
 		m.composing, m.newChat = false, ""
 		m.openOverlay(newChatScreen)
-	case "rail:files":
-		return m.openExplorer()
 	case "rail:settings":
 		m.composing = false
 		m.openOverlay(settingsScreen)
@@ -140,8 +138,15 @@ func (m *Model) activate(id string, double bool) tea.Cmd {
 	case "head:more":
 		m.composing, m.menuIndex = false, 0
 		m.active = menuScreen
-	case "plus", "attach":
+	case "plus":
 		return m.openExplorer()
+	case "status:new":
+		m.statusDraft = ""
+		m.active = statusComposeScreen
+	case "status:back":
+		m.active = statusComposeScreen
+	case "status:post":
+		return m.postStatus()
 	case "emoji":
 		if !m.sending {
 			m.composing = false
@@ -156,6 +161,12 @@ func (m *Model) activate(id string, double bool) tea.Cmd {
 		return m.pressKey("esc")
 	case "logout:confirm":
 		return m.logout()
+	case "update:check":
+		if !m.updateChecking && !m.updateRunning {
+			return m.openUpdate()
+		}
+	case "update:run":
+		return m.runUpdate()
 	case "newchat:go":
 		return m.key(tea.KeyMsg{Type: tea.KeyEnter})
 	case "confirm:cancel":
@@ -208,8 +219,7 @@ func (m *Model) activate(id string, double bool) tea.Cmd {
 		return m.runMenu(n)
 	}
 	if n, ok := idNum(id, "emoji:"); ok {
-		m.insertEmoji(n)
-		return nil
+		return m.insertEmoji(n)
 	}
 	if n, ok := idNum(id, "set:"); ok {
 		m.settingsIndex = n

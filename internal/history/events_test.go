@@ -145,6 +145,54 @@ func TestOutgoingEchoDeliveryAndRevisionPagination(t *testing.T) {
 	}
 }
 
+func TestRepliesStatusesAndReactionProjection(t *testing.T) {
+	r := testRepository(t)
+	ctx := context.Background()
+	original := testEvent(MessageEvent, "original", 0, "source text")
+	apply(t, r, original)
+	reply := testEvent(MessageEvent, "reply", 1, "reply text")
+	reply.MessageID = "reply"
+	reply.ReplyToID, reply.ReplySender, reply.ReplyBody = original.MessageID, original.Sender, original.Body
+	apply(t, r, reply)
+	react := testEvent(ReactionEvent, "reaction-1", 2, "")
+	react.ReactionToID, react.Reaction = original.MessageID, "👍"
+	apply(t, r, react)
+	updated := react
+	updated.MessageID, updated.EventID, updated.Reaction, updated.Timestamp = "reaction-2", "reaction:2", "❤️", testTime.Add(3*time.Second)
+	apply(t, r, updated)
+	stale := react
+	stale.MessageID, stale.EventID, stale.Reaction, stale.Timestamp = "reaction-stale", "reaction:stale", "👍", testTime.Add(2*time.Second)
+	apply(t, r, stale)
+	statusAt := time.Now().UTC()
+	status := StatusUpdate{AccountID: "account", ID: "status-1", Sender: "peer", Name: "Peer", Body: "available", CreatedAt: statusAt}
+	if err := r.SaveStatus(ctx, status); err != nil {
+		t.Fatal(err)
+	}
+
+	messages, err := r.Messages(ctx, "account", "chat", nil, 10)
+	if err != nil || len(messages) != 2 {
+		t.Fatalf("messages: %v %v", messages, err)
+	}
+	if messages[0].ID != "reply" || messages[0].ReplyToID != "message" || messages[0].ReplySender != "sender" || messages[0].ReplyBody != "source text" {
+		t.Fatalf("reply context lost: %+v", messages[0])
+	}
+	if len(messages[1].Reactions) != 1 || messages[1].Reactions[0] != (MessageReaction{Sender: "sender", Emoji: "❤️"}) {
+		t.Fatalf("reaction projection: %+v", messages[1].Reactions)
+	}
+	statuses, err := r.Statuses(ctx, "account", statusAt.Add(-time.Hour), 10)
+	if err != nil || len(statuses) != 1 || statuses[0].Body != "available" {
+		t.Fatalf("statuses: %+v %v", statuses, err)
+	}
+	removed := updated
+	removed.MessageID, removed.EventID, removed.Reaction = "reaction-remove", "reaction:remove", ""
+	removed.Timestamp = testTime.Add(4 * time.Second)
+	apply(t, r, removed)
+	messages, err = r.Messages(ctx, "account", "chat", nil, 10)
+	if err != nil || len(messages[1].Reactions) != 0 {
+		t.Fatalf("reaction removal: %+v %v", messages, err)
+	}
+}
+
 func TestMalformedEventsAndTransactionRollback(t *testing.T) {
 	r := testRepository(t)
 	ctx := context.Background()
@@ -180,6 +228,7 @@ func TestLegacyMigrationAndReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	_, err = db.Exec(`
 CREATE TABLE conversations(id TEXT PRIMARY KEY,title TEXT NOT NULL,updated_at TEXT NOT NULL);
 CREATE TABLE messages(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES conversations(id),sender TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,deleted_at TEXT);
@@ -213,6 +262,65 @@ INSERT INTO message_revisions VALUES('message',1,'original','2026-01-01T12:00:00
 			t.Fatalf("version %d %v", version, err)
 		}
 		r.Close()
+	}
+}
+
+func TestVersionOneAndTwoMigrationsAddReplyStatusAndReactionStorage(t *testing.T) {
+	ctx := context.Background()
+	v1Path := filepath.Join(t.TempDir(), "v1.db")
+	db, err := sql.Open("sqlite", v1Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`
+CREATE TABLE account_messages(
+ account_id TEXT NOT NULL, chat_id TEXT NOT NULL, id TEXT NOT NULL,
+ sender TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ deleted_at TEXT, body_at TEXT NOT NULL, body_event TEXT NOT NULL,
+ from_me INTEGER NOT NULL, edited INTEGER NOT NULL, status TEXT NOT NULL, original_seen INTEGER NOT NULL,
+ PRIMARY KEY(account_id,chat_id,id)
+);
+PRAGMA user_version=1;`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	v1, err := Open(v1Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var version int
+	if err := v1.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != schemaVersion {
+		t.Fatalf("v1 migration version: %d %v", version, err)
+	}
+	var tables int
+	if err := v1.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('account_statuses','account_reactions')`).Scan(&tables); err != nil || tables != 2 {
+		t.Fatalf("v1 migration tables: %d %v", tables, err)
+	}
+	if err := v1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	v2Path := filepath.Join(t.TempDir(), "v2.db")
+	v2, err := Open(v2Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v2.db.Exec(`DROP TABLE account_reactions; PRAGMA user_version=2;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := v2.Close(); err != nil {
+		t.Fatal(err)
+	}
+	v2, err = Open(v2Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer v2.Close()
+	if err := v2.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != schemaVersion {
+		t.Fatalf("v2 migration version: %d %v", version, err)
 	}
 }
 

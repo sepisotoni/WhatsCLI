@@ -13,6 +13,7 @@ import (
 	"whatscli/internal/history"
 	"whatscli/internal/messaging"
 	"whatscli/internal/ui"
+	"whatscli/internal/updater"
 	"whatscli/internal/webpair"
 )
 
@@ -35,6 +36,10 @@ const (
 	explorerScreen
 	emojiScreen
 	menuScreen
+	statusesScreen
+	statusComposeScreen
+	statusConfirmScreen
+	updateScreen
 )
 
 type listMode int
@@ -89,11 +94,30 @@ type fileMsg struct {
 }
 type sentMsg struct {
 	account, chat string
+	replyID       string
 	err           error
 }
 type createdChatMsg struct {
 	account, chat, title string
 	err                  error
+}
+type statusesMsg struct {
+	account string
+	items   []history.StatusUpdate
+	err     error
+}
+type statusPostedMsg struct{ err error }
+type reactionMsg struct {
+	account, chat string
+	err           error
+}
+type updateCheckMsg struct {
+	version updater.Version
+	err     error
+}
+type updateRunMsg struct {
+	output string
+	err    error
 }
 type unreadMsg struct {
 	account string
@@ -131,6 +155,8 @@ type Model struct {
 	conversations                      []history.Conversation
 	messages                           []history.Message
 	revisions                          []history.Revision
+	replyTo                            *history.Message
+	reactionTarget                     *history.Message
 	unread                             map[string]int
 	chatIndex, messageIndex            int
 	listTop, msgTop                    int
@@ -172,9 +198,15 @@ type Model struct {
 	lastClickAt                        time.Time
 	lastUnread                         int
 	demoSubtitle                       map[string]string
+	statuses                           []history.StatusUpdate
+	statusIndex                        int
+	statusDraft                        string
+	updateVersion                      updater.Version
+	updateNotice                       string
+	updateChecking, updateRunning      bool
 }
 
-var commands = []string{"conversations", "new chat", "files", "meta ai", "connect", "attach", "help", "settings", "logout", "quit"}
+var commands = []string{"conversations", "new chat", "statuses", "files", "meta ai", "connect", "help", "settings", "update", "logout", "quit"}
 
 func New(repo history.Repository) Model {
 	return Model{
@@ -282,6 +314,44 @@ func (m Model) loadMessages(before *history.Cursor) tea.Cmd {
 	return func() tea.Msg {
 		messages, err := m.repo.Messages(m.ctx, m.account, m.chatID, before, 50)
 		return messagesMsg{before, m.account, m.chatID, messages, err}
+	}
+}
+
+func (m Model) loadStatuses() tea.Cmd {
+	if m.repo == nil || !m.settings.Accepted() {
+		return nil
+	}
+	account, repo, ctx := m.account, m.repo, m.ctx
+	return func() tea.Msg {
+		items, err := repo.Statuses(ctx, account, time.Now().Add(-24*time.Hour), 50)
+		return statusesMsg{account: account, items: items, err: err}
+	}
+}
+
+func (m *Model) postStatus() tea.Cmd {
+	if strings.TrimSpace(m.statusDraft) == "" || m.sending {
+		return nil
+	}
+	draft := strings.TrimSpace(m.statusDraft)
+	m.sending = true
+	if m.demo {
+		account, repo := m.account, m.repo
+		return func() tea.Msg {
+			return statusPostedMsg{err: repo.SaveStatus(m.ctx, history.StatusUpdate{
+				AccountID: account, ID: fmt.Sprintf("demo-status-%d", time.Now().UnixNano()),
+				Sender: "me", Name: "You", Body: draft, CreatedAt: time.Now().UTC(),
+			})}
+		}
+	}
+	if m.runtime == nil || !m.connection.Online {
+		m.sending = false
+		m.setNotice("Not connected; status was not posted.", true)
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(m.ctx, 2*time.Minute)
+	return func() tea.Msg {
+		defer cancel()
+		return statusPostedMsg{err: m.runtime.PostStatus(ctx, draft)}
 	}
 }
 
@@ -507,7 +577,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fullscreen = false
 		}
 		m.trackPairing()
-		return m, tea.Batch(m.wait(), m.loadChats(m.chatBefore), m.loadMessages(m.messageBefore), m.loadUnread(), m.fetchAvatars(4))
+		return m, tea.Batch(m.wait(), m.loadChats(m.chatBefore), m.loadMessages(m.messageBefore), m.loadUnread(), m.fetchAvatars(4), m.loadStatuses())
 	case operationMsg:
 		if msg.err != nil {
 			m.setNotice("Operation failed. Check connectivity, then retry; details are not logged.", true)
@@ -606,6 +676,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ring {
 			return m, bell()
 		}
+	case statusesMsg:
+		if msg.account != m.account {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.setNotice("Could not load recent status updates.", true)
+			return m, nil
+		}
+		m.statuses = msg.items
+		m.statusIndex = min(m.statusIndex, max(0, len(m.statuses)-1))
+	case statusPostedMsg:
+		m.sending = false
+		if msg.err != nil {
+			m.setNotice(msg.err.Error(), true)
+			return m, nil
+		}
+		m.statusDraft = ""
+		m.active = statusesScreen
+		m.setNotice("Status posted to your WhatsApp audience.", false)
+		return m, m.loadStatuses()
+	case updateCheckMsg:
+		m.updateChecking = false
+		if msg.err != nil {
+			m.updateNotice = msg.err.Error()
+		} else {
+			m.updateVersion = msg.version
+			if !msg.version.Available {
+				m.updateNotice = "WhatsCLI is up to date."
+			} else {
+				m.updateNotice = "An update is available."
+			}
+		}
+		return m, nil
+	case updateRunMsg:
+		m.updateRunning = false
+		if msg.err != nil {
+			m.updateNotice = msg.err.Error()
+		} else {
+			m.updateNotice = strings.TrimSpace(msg.output) + " Restart WhatsCLI to use the installed version."
+			m.updateVersion = updater.Version{}
+		}
+		return m, nil
+	case reactionMsg:
+		m.sending = false
+		if msg.err != nil {
+			m.setNotice(msg.err.Error(), true)
+		} else {
+			m.active = chatScreen
+			m.reactionTarget = nil
+			m.setNotice("Reacted", false)
+		}
+		if msg.account == m.account && msg.chat == m.chatID {
+			return m, m.loadMessages(m.messageBefore)
+		}
+		return m, nil
 	case createdChatMsg:
 		if msg.account != m.account {
 			return m, nil
@@ -620,6 +745,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.chatID, m.chatTitle, m.messages = msg.chat, msg.title, nil
 		m.messageIndex, m.messageBefore, m.msgTop = 0, nil, 0
+		m.replyTo, m.reactionTarget = nil, nil
 		m.active, m.trail, m.newChat = chatScreen, nil, ""
 		m.search, m.searching = "", false
 		m.markRead(msg.chat)
@@ -691,6 +817,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.composer = ""
 				m.path = ""
 				m.composing = false
+				if m.replyTo != nil && m.replyTo.ID == msg.replyID {
+					m.replyTo = nil
+				}
 			}
 		}
 		return m, m.loadMessages(m.messageBefore)
@@ -750,6 +879,10 @@ func dropRune(s string) string {
 }
 
 func (m *Model) send(text, path string) tea.Cmd {
+	return m.sendWithReply(text, path, nil)
+}
+
+func (m *Model) sendWithReply(text, path string, reply *history.Message) tea.Cmd {
 	if m.demo {
 		if path != "" {
 			m.setNotice("Demo mode does not read or send files.", true)
@@ -767,8 +900,9 @@ func (m *Model) send(text, path string) tea.Cmd {
 				Kind: history.MessageEvent, AccountID: account, ChatID: chat, Title: title,
 				MessageID: fmt.Sprintf("demo-send-%d", time.Now().UnixNano()), Sender: "You",
 				Body: text, Timestamp: at, FromMe: true, Status: "sent",
+				ReplyToID: replyID(reply), ReplySender: replySender(reply), ReplyBody: replyBody(reply),
 			})
-			return sentMsg{account, chat, err}
+			return sentMsg{account: account, chat: chat, replyID: replyID(reply), err: err}
 		}
 	}
 	if m.runtime == nil || !m.connection.Online {
@@ -782,8 +916,70 @@ func (m *Model) send(text, path string) tea.Cmd {
 	chat := m.chatID
 	runtime := m.runtime
 	account := m.account
+	target := reply
 	return func() tea.Msg {
 		defer cancel()
-		return sentMsg{account: account, chat: chat, err: runtime.Send(ctx, chat, text, path)}
+		var err error
+		if target != nil {
+			err = runtime.SendReply(ctx, chat, text, *target)
+		} else {
+			err = runtime.Send(ctx, chat, text, path)
+		}
+		return sentMsg{account: account, chat: chat, replyID: replyID(target), err: err}
 	}
+}
+
+func (m *Model) react(emoji string) tea.Cmd {
+	if m.reactionTarget == nil || m.sending {
+		return nil
+	}
+	target := *m.reactionTarget
+	account, chat := m.account, m.chatID
+	if m.demo {
+		m.sending = true
+		repo, ctx := m.repo, m.ctx
+		return func() tea.Msg {
+			event := history.IncomingEvent{
+				Kind: history.ReactionEvent, AccountID: account, ChatID: chat,
+				MessageID: fmt.Sprintf("demo-reaction-%d", time.Now().UnixNano()),
+				EventID:   fmt.Sprintf("demo-reaction:%s:%d", target.ID, time.Now().UnixNano()),
+				Sender:    "You", Timestamp: time.Now().UTC(), FromMe: true,
+				ReactionToID: target.ID, Reaction: emoji,
+			}
+			return reactionMsg{account: account, chat: chat, err: repo.ApplyEvent(ctx, event)}
+		}
+	}
+	if m.runtime == nil || !m.connection.Online {
+		m.setNotice("Not connected; reaction was not sent.", true)
+		return nil
+	}
+	m.sending = true
+	m.setNotice("Sending reaction…", false)
+	ctx, cancel := context.WithTimeout(m.ctx, 2*time.Minute)
+	runtime := m.runtime
+	return func() tea.Msg {
+		defer cancel()
+		return reactionMsg{account: account, chat: chat, err: runtime.React(ctx, chat, target, emoji)}
+	}
+}
+
+func replyID(message *history.Message) string {
+	if message == nil {
+		return ""
+	}
+	return message.ID
+}
+
+func replySender(message *history.Message) string {
+	if message == nil {
+		return ""
+	}
+	return message.Sender
+}
+
+func replyBody(message *history.Message) string {
+	if message == nil {
+		return ""
+	}
+	return message.Body
 }

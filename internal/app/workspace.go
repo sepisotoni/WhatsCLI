@@ -50,6 +50,22 @@ const (
 	listHead  = 7
 )
 
+func (s *scene) scrollbar(x, y, height, total, visible, offset int) {
+	if total <= visible || height < 2 {
+		return
+	}
+	thumb := max(1, height*visible/total)
+	thumb = min(height, thumb)
+	top := y + (height-thumb)*min(max(offset, 0), max(0, total-visible))/max(1, total-visible)
+	for row := y; row < y+height; row++ {
+		glyph, fg := '│', ui.Border
+		if row >= top && row < top+thumb {
+			glyph, fg = '█', ui.Accent
+		}
+		s.c.Put(x, row, glyph, fg, ui.Panel, false)
+	}
+}
+
 // listCapacity is the number of chat rows that fit in the list viewport.
 func (m Model) listCapacity() int {
 	h := m.geo().list.H
@@ -113,7 +129,6 @@ func (s *scene) rail(r ui.Rect) {
 		{"+", "rail:new", false},
 		{"☻", "rail:contacts", m.listMode == modeContacts},
 		{"◔", "rail:unread", m.listMode == modeUnread},
-		{"⤓", "rail:files", m.active == explorerScreen},
 	}
 	for _, b := range buttons {
 		if y+3 > r.Bottom()-5 {
@@ -278,6 +293,12 @@ func (s *scene) list(r ui.Rect) {
 		y := y0 + slot*itemPitch
 		s.chatRow(ui.R(r.X+1, y, r.W-2, 3), idx, idx == m.chatIndex)
 	}
+	ay := r.Bottom() - 5
+	trackY := y0
+	trackH := max(0, ay-trackY-2)
+	if trackH > 0 {
+		s.scrollbar(r.Right()-2, trackY, trackH, len(indices), vis, top)
+	}
 	if len(indices) == 0 {
 		msg := "No chats here yet."
 		hint := "n · start a conversation"
@@ -291,7 +312,6 @@ func (s *scene) list(r ui.Rect) {
 		c.Text(r.X+4, y0+3, hint, ui.Faint, ui.Panel, false)
 	}
 	// Archive row (or back-to-chats while viewing the archive).
-	ay := r.Bottom() - 5
 	c.HLine(r.X+2, ay-1, r.W-4, '─', ui.Mix(ui.Border, ui.Panel, .5))
 	rect := ui.R(r.X+1, ay, r.W-2, 4)
 	if s.is("archive") {
@@ -301,15 +321,15 @@ func (s *scene) list(r ui.Rect) {
 	if s.is("archive") {
 		bg = ui.PanelHi
 	}
-	icon := ui.R(r.X+3, ay, 6, 3)
+	icon := ui.R(r.X+3, ay, 8, 3)
 	c.Fill(icon, bg)
-	ui.DrawAvatar(c, icon.X, icon.Y, "▣", nil, bg)
+	c.Text(icon.X+3, icon.Y+1, "▣", ui.Accent, bg, true)
 	label := "Archive"
 	glyph := "›"
 	if m.listMode == modeArchive {
 		label, glyph = "Back to chats", "‹"
 	}
-	c.Text(r.X+11, ay+1, label, ui.Text, bg, true)
+	c.Text(r.X+13, ay+1, label, ui.Text, bg, true)
 	c.Text(r.Right()-4, ay+1, glyph, ui.Text, bg, true)
 	s.add(rect, "archive")
 }
@@ -335,8 +355,8 @@ func (s *scene) chatRow(r ui.Rect, idx int, selected bool) {
 		name = conv.ID
 	}
 	ui.DrawAvatar(c, r.X+2, r.Y, name, m.photoFor(conv.ID), bg)
-	tx := r.X + 9
-	tw := r.W - 11
+	tx := r.X + 10
+	tw := r.W - 12
 	stamp := m.stamp(conv.UpdatedAt)
 	unread := m.unread[conv.ID]
 	stampFG := ui.Dim
@@ -407,7 +427,7 @@ func (s *scene) mainPane(r ui.Rect, compact bool) {
 		return
 	}
 	ch := 5
-	if r.H < 24 {
+	if r.H < 24 && m.replyTo == nil {
 		ch = 3
 	}
 	head := ui.R(r.X, r.Y, r.W, 5)
@@ -443,8 +463,8 @@ func (s *scene) header(r ui.Rect, compact bool) {
 		s.center(br, b.glyph, ui.Accent, ui.Panel, true)
 		s.add(br, b.id)
 	}
-	tw := bx - (x + 8) - 1
-	c.Text(x+8, r.Y+1, ui.Truncate(ui.SingleLine(m.chatTitle), tw, "…"), ui.Text, ui.Panel, true)
+	tw := bx - (x + 10) - 1
+	c.Text(x+10, r.Y+1, ui.Truncate(ui.SingleLine(m.chatTitle), tw, "…"), ui.Text, ui.Panel, true)
 	sub := m.subtitle()
 	status := ""
 	if m.demo {
@@ -471,6 +491,8 @@ func (s *scene) header(r ui.Rect, compact bool) {
 
 type bubble struct {
 	name         string
+	quote        string
+	reactions    string
 	lines        []string
 	meta         string
 	tick         string
@@ -512,6 +534,36 @@ func (m Model) buildBubble(msg history.Message, iw int) bubble {
 		body = "[deleted · retained locally]\n" + body
 	}
 	maxText := max(12, min(iw*58/100, 72))
+	if msg.ReplyToID != "" {
+		sender := "Quoted message"
+		if msg.ReplySender != "" {
+			sender = m.quotedSender(msg.ReplySender)
+		}
+		body := ui.SingleLine(msg.ReplyBody)
+		if body == "" {
+			body = "Message"
+		}
+		b.quote = ui.Truncate(sender+": "+body, maxText, "…")
+	}
+	if len(msg.Reactions) > 0 {
+		counts := make(map[string]int, len(msg.Reactions))
+		var order []string
+		for _, reaction := range msg.Reactions {
+			if _, exists := counts[reaction.Emoji]; !exists {
+				order = append(order, reaction.Emoji)
+			}
+			counts[reaction.Emoji]++
+		}
+		var parts []string
+		for _, emoji := range order {
+			part := emoji
+			if counts[emoji] > 1 {
+				part += fmt.Sprintf(" %d", counts[emoji])
+			}
+			parts = append(parts, part)
+		}
+		b.reactions = ui.Truncate(strings.Join(parts, "  "), maxText, "…")
+	}
 	b.lines = ui.Wrap(body, maxText)
 	b.meta = m.clock(msg.CreatedAt)
 	if msg.Edited {
@@ -524,6 +576,8 @@ func (m Model) buildBubble(msg history.Message, iw int) bubble {
 	}
 	mw := ui.StringWidth(meta)
 	content := ui.StringWidth(b.name)
+	content = max(content, ui.StringWidth(b.quote))
+	content = max(content, ui.StringWidth(b.reactions))
 	for _, l := range b.lines {
 		content = max(content, ui.StringWidth(l))
 	}
@@ -536,14 +590,27 @@ func (m Model) buildBubble(msg history.Message, iw int) bubble {
 	}
 	b.w = content + 4
 	rows := len(b.lines)
+	if b.quote != "" {
+		rows++
+	}
 	if b.name != "" {
 		rows++
 	}
 	if !b.inline {
 		rows++
 	}
+	if b.reactions != "" {
+		rows++
+	}
 	b.h = rows + 2
 	return b
+}
+
+func (m Model) quotedSender(sender string) string {
+	if sender == m.account || sender == "me" {
+		return "You"
+	}
+	return m.senderLabel(sender)
 }
 
 func (m Model) dayLabel(t time.Time) string {
@@ -623,7 +690,7 @@ func (m Model) bodyInner() ui.Rect {
 		return ui.Rect{}
 	}
 	ch := 5
-	if r.H < 24 {
+	if r.H < 24 && m.replyTo == nil {
 		ch = 3
 	}
 	return ui.R(r.X, r.Y+5, r.W, r.H-5-ch).Inset(1)
@@ -681,6 +748,7 @@ func (s *scene) body(r ui.Rect) {
 	if lo > 0 {
 		c.Text(inner.Right()-3, inner.Y, "▲", ui.Accent, 0, true)
 	}
+	s.scrollbar(inner.Right()-1, inner.Y, inner.H, len(items), hi-lo+1, lo)
 }
 
 func (s *scene) drawBubble(inner ui.Rect, y int, b bubble, selected, hover bool) {
@@ -717,6 +785,11 @@ func (s *scene) drawBubble(inner ui.Rect, y int, b bubble, selected, hover bool)
 		c.Text(x+2, row, b.name, ui.Accent, col, true)
 		row++
 	}
+	if b.quote != "" {
+		c.Put(x+1, row, '▌', ui.Accent, col, true)
+		c.Text(x+2, row, b.quote, ui.Dim, col, false)
+		row++
+	}
 	for i, line := range b.lines {
 		c.Text(x+2, row, line, ui.Text, col, false)
 		if i == len(b.lines)-1 && b.inline {
@@ -726,6 +799,10 @@ func (s *scene) drawBubble(inner ui.Rect, y int, b bubble, selected, hover bool)
 	}
 	if !b.inline {
 		s.meta(x, row, b, col)
+		row++
+	}
+	if b.reactions != "" {
+		c.Text(x+2, row, b.reactions, ui.Accent, col, true)
 	}
 }
 
@@ -746,7 +823,11 @@ func (s *scene) meta(x, row int, b bubble, col ui.Color) {
 func (s *scene) composerBar(r ui.Rect) {
 	m, c := s.m, s.c
 	y := r.Y
-	if r.H >= 5 {
+	if m.replyTo != nil {
+		y = r.Y + 2
+		quote := "Replying to " + m.quotedSender(m.replyTo.Sender) + ": " + ui.SingleLine(m.replyTo.Body)
+		c.Text(r.X+2, r.Y, ui.Truncate(quote, r.W-4, "…"), ui.Accent, ui.Panel, false)
+	} else if r.H >= 5 {
 		y++
 	}
 	r = ui.R(r.X+1, r.Y, r.W-2, r.H)
@@ -770,7 +851,7 @@ func (s *scene) composerBar(r ui.Rect) {
 	if m.composer != "" || m.composing {
 		text, fg = strings.ReplaceAll(ui.SafeText(m.composer), "\n", "↵"), ui.Text
 	}
-	avail := in.W - 4 - 8
+	avail := in.W - 4 - 5
 	shown := ui.TailFit(text, avail)
 	if m.composer == "" && !m.composing {
 		shown = ui.Truncate(shown, avail, "…")
@@ -779,13 +860,12 @@ func (s *scene) composerBar(r ui.Rect) {
 	if m.composing && (m.settings.ReducedMotion || m.frame%2 == 0) {
 		c.Fill(ui.R(in.X+2+w, y+1, 1, 1), ui.Accent)
 	}
-	emoji := ui.R(in.Right()-8, y+1, 3, 1)
-	attach := ui.R(in.Right()-4, y+1, 3, 1)
+	emoji := ui.R(in.Right()-5, y+1, 3, 1)
 	for _, ic := range []struct {
 		r     ui.Rect
 		glyph string
 		id    string
-	}{{emoji, "☺", "emoji"}, {attach, "↥", "attach"}} {
+	}{{emoji, "☺", "emoji"}} {
 		fgc := ui.Dim
 		if s.is(ic.id) {
 			fgc = ui.Accent
@@ -847,11 +927,11 @@ func (m Model) hints() string {
 	case m.composing && strings.HasPrefix(m.composer, "/"):
 		return "Enter run · Tab complete · ↑↓ choose · // sends a literal slash · Esc close"
 	case m.composing:
-		return "Enter send · / commands · Ctrl+J newline · Ctrl+U clear · Esc stop typing"
+		return "Enter send · Ctrl+R reply target · Ctrl+J newline · Ctrl+U clear · Esc stop typing"
 	case m.searching:
 		return "Type to filter · ↑↓ select · Enter open · Esc clear"
 	case m.active == chatScreen:
-		return "i type · / commands · a files · Enter versions · e archive · Tab chats · Esc back"
+		return "↑↓ select · Ctrl+R reply · Ctrl+E react · i type · a files · /statuses · Tab chats · Esc back"
 	}
 	return "↑↓ select · Enter open · / commands · n new chat · Ctrl+F search · e archive · s settings · ? help · q quit"
 }

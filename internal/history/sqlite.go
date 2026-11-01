@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 	"whatscli/internal/privatefs"
@@ -83,6 +84,10 @@ func (r *SQLiteRepository) ApplyEvent(ctx context.Context, event IncomingEvent) 
 			return errors.New("message sender is required")
 		}
 	case EditEvent, DeleteEvent, DeliveryEvent:
+	case ReactionEvent:
+		if event.Sender == "" || event.ReactionToID == "" || len(event.Reaction) > 128 || utf8.RuneCountInString(event.Reaction) > 32 {
+			return errors.New("reaction sender, target, or emoji is invalid")
+		}
 	default:
 		return errors.New("unsupported history event kind")
 	}
@@ -95,9 +100,12 @@ func (r *SQLiteRepository) ApplyEvent(ctx context.Context, event IncomingEvent) 
 	event.Timestamp = event.Timestamp.UTC()
 	if event.EventID == "" {
 		// Titles and sender display metadata do not determine event identity.
-		data, _ := json.Marshal([]any{event.Kind, formatTime(event.Timestamp), event.Body, event.Status})
+		data, _ := json.Marshal([]any{event.Kind, formatTime(event.Timestamp), event.Body, event.Status, event.ReactionToID, event.Reaction})
 		sum := sha256.Sum256(data)
 		event.EventID = hex.EncodeToString(sum[:])
+	}
+	if event.Kind == ReactionEvent {
+		return r.applyReaction(ctx, event)
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -163,7 +171,7 @@ func (r *SQLiteRepository) ApplyEvent(ctx context.Context, event IncomingEvent) 
 			return err
 		}
 		if event.Kind == MessageEvent {
-			_, err = tx.ExecContext(ctx, `UPDATE account_messages SET sender=?,from_me=?,created_at=CASE WHEN original_seen=0 THEN ? ELSE MIN(created_at,?) END,original_seen=1 WHERE account_id=? AND chat_id=? AND id=?`, event.Sender, event.FromMe, at, at, event.AccountID, event.ChatID, event.MessageID)
+			_, err = tx.ExecContext(ctx, `UPDATE account_messages SET sender=?,from_me=?,created_at=CASE WHEN original_seen=0 THEN ? ELSE MIN(created_at,?) END,original_seen=1,reply_to_id=?,reply_sender=?,reply_body=? WHERE account_id=? AND chat_id=? AND id=?`, event.Sender, event.FromMe, at, at, event.ReplyToID, event.ReplySender, event.ReplyBody, event.AccountID, event.ChatID, event.MessageID)
 			if err != nil {
 				return err
 			}
@@ -198,6 +206,35 @@ func (r *SQLiteRepository) ApplyEvent(ctx context.Context, event IncomingEvent) 
 		}
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE account_messages SET updated_at=MAX(updated_at,?) WHERE account_id=? AND chat_id=? AND id=?`, append([]any{at}, key...)...)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (r *SQLiteRepository) applyReaction(ctx context.Context, event IncomingEvent) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO history_events(account_id,chat_id,message_id,event_id,kind) VALUES(?,?,?,?,?)`,
+		event.AccountID, event.ChatID, event.MessageID, event.EventID, string(ReactionEvent))
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil || n == 0 {
+		if err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO account_reactions(account_id,chat_id,target_id,sender,emoji,updated_at)
+			VALUES(?,?,?,?,?,?) ON CONFLICT(account_id,chat_id,target_id,sender) DO UPDATE SET
+			emoji=excluded.emoji,updated_at=excluded.updated_at
+			WHERE excluded.updated_at>=account_reactions.updated_at`,
+		event.AccountID, event.ChatID, event.ReactionToID, event.Sender, event.Reaction, formatTime(event.Timestamp))
 	if err != nil {
 		return err
 	}
@@ -267,7 +304,7 @@ func (r *SQLiteRepository) Messages(ctx context.Context, account, chat string, b
 	if err != nil {
 		return nil, err
 	}
-	query := `SELECT account_id,id,chat_id,sender,body,created_at,updated_at,deleted_at,from_me,edited,status FROM account_messages WHERE account_id=? AND chat_id=?`
+	query := `SELECT account_id,id,chat_id,sender,body,created_at,updated_at,deleted_at,from_me,edited,status,reply_to_id,reply_sender,reply_body FROM account_messages WHERE account_id=? AND chat_id=?`
 	args := []any{account, chat}
 	if before != nil {
 		query += ` AND (created_at<? OR (created_at=? AND id<?))`
@@ -284,7 +321,7 @@ func (r *SQLiteRepository) Messages(ctx context.Context, account, chat string, b
 		var m Message
 		var created, updated string
 		var deleted sql.NullString
-		if err := rows.Scan(&m.AccountID, &m.ID, &m.ConversationID, &m.Sender, &m.Body, &created, &updated, &deleted, &m.FromMe, &m.Edited, &m.Status); err != nil {
+		if err := rows.Scan(&m.AccountID, &m.ID, &m.ConversationID, &m.Sender, &m.Body, &created, &updated, &deleted, &m.FromMe, &m.Edited, &m.Status, &m.ReplyToID, &m.ReplySender, &m.ReplyBody); err != nil {
 			return nil, err
 		}
 		if m.CreatedAt, err = parseTime(created); err != nil {
@@ -301,6 +338,91 @@ func (r *SQLiteRepository) Messages(ctx context.Context, account, chat string, b
 			m.Deleted, m.DeletedAt = true, &at
 		}
 		result = append(result, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range result {
+		reactions, err := r.db.QueryContext(ctx, `SELECT sender,emoji FROM account_reactions
+			WHERE account_id=? AND chat_id=? AND target_id=? AND emoji<>'' ORDER BY sender`, account, chat, result[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		for reactions.Next() {
+			var reaction MessageReaction
+			if err := reactions.Scan(&reaction.Sender, &reaction.Emoji); err != nil {
+				reactions.Close()
+				return nil, err
+			}
+			result[i].Reactions = append(result[i].Reactions, reaction)
+		}
+		if err := reactions.Err(); err != nil {
+			reactions.Close()
+			return nil, err
+		}
+		if err := reactions.Close(); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+func (r *SQLiteRepository) SaveStatus(ctx context.Context, status StatusUpdate) error {
+	if status.AccountID == "" || status.ID == "" || status.Sender == "" || status.CreatedAt.IsZero() {
+		return errors.New("status account, ID, sender and timestamp are required")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM account_statuses WHERE account_id=? AND created_at<=?`,
+		status.AccountID, formatTime(time.Now().UTC().Add(-24*time.Hour))); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO account_statuses(account_id,id,sender,name,body,created_at)
+		VALUES(?,?,?,?,?,?) ON CONFLICT(account_id,id,sender) DO UPDATE SET
+		name=excluded.name,body=excluded.body,created_at=excluded.created_at
+		WHERE excluded.created_at>=account_statuses.created_at`,
+		status.AccountID, status.ID, status.Sender, status.Name, status.Body, formatTime(status.CreatedAt))
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (r *SQLiteRepository) Statuses(ctx context.Context, account string, since time.Time, limit int) ([]StatusUpdate, error) {
+	if account == "" || since.IsZero() {
+		return nil, errors.New("status account and expiry boundary are required")
+	}
+	limit, err := pageLimit(limit)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM account_statuses WHERE account_id=? AND created_at<=?`, account, formatTime(since.UTC())); err != nil {
+		return nil, err
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT account_id,id,sender,name,body,created_at FROM account_statuses
+		WHERE account_id=? AND created_at>? ORDER BY created_at DESC,id DESC LIMIT ?`,
+		account, formatTime(since.UTC()), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []StatusUpdate
+	for rows.Next() {
+		var status StatusUpdate
+		var at string
+		if err := rows.Scan(&status.AccountID, &status.ID, &status.Sender, &status.Name, &status.Body, &at); err != nil {
+			return nil, err
+		}
+		if status.CreatedAt, err = parseTime(at); err != nil {
+			return nil, err
+		}
+		result = append(result, status)
 	}
 	return result, rows.Err()
 }

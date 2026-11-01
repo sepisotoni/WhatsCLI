@@ -21,10 +21,23 @@ class InstallerTests(unittest.TestCase):
                         WHATSCLI_BIN_DIR=str(self.root / "local bin"))
         self.tool("git", """#!/bin/sh
 set -eu
+if [ "${1:-}" = "-C" ]; then
+  shift 2
+  case "$1" in
+    remote) printf '%s\\n' "${FAKE_ORIGIN:-https://github.com/sepisotoni/WhatsCLI.git}" ;;
+    status) [ "${DIRTY:-}" != 1 ] || printf ' M README.md\\n' ;;
+    fetch) [ "${FAIL_FETCH:-}" != 1 ] ;;
+    checkout) [ "${FAIL_CHECKOUT:-}" != 1 ] ;;
+    *) exit 2 ;;
+  esac
+  exit
+fi
 [ "${FAIL_CLONE:-}" != 1 ] || exit 1
 for dest do :; done
 mkdir -p "$dest"
 printf 'module whatscli\\n' > "$dest/go.mod"
+printf '0.4.0\\n' > "$dest/VERSION"
+mkdir -p "$dest/.git"
 """)
         self.tool("go", """#!/bin/sh
 set -eu
@@ -37,6 +50,11 @@ if [ "$1" = build ]; then
   printf '#!/bin/sh\\nprintf "test binary\\\\n"\\n' > "$out"
 fi
 """)
+        self.tool("curl", """#!/bin/sh
+set -eu
+[ "${FAIL_RELEASE_LOOKUP:-}" != 1 ] || exit 1
+printf '{"tag_name":"v0.4.0"}\\n'
+""")
 
     def tool(self, name, source):
         path = self.tools / name
@@ -47,6 +65,18 @@ fi
         return subprocess.run(["sh", str(INSTALLER), *args],
                               env=self.env, cwd=cwd or self.root,
                               text=True, capture_output=True)
+
+    def update_checkout(self):
+        directory = self.root / f"checkout-{len(list(self.root.glob('checkout-*')))}"
+        self.env["WHATSCLI_DIR"] = str(directory)
+        directory.mkdir()
+        (directory / ".git").mkdir()
+        (directory / "go.mod").write_text("module whatscli\n")
+        (directory / "VERSION").write_text("0.4.0\n")
+        (directory / "bin").mkdir()
+        binary = directory / "bin/whatscli"
+        binary.write_text("old binary")
+        return directory, binary
 
     def test_fresh_install_with_spaces(self):
         result = self.run_installer()
@@ -101,6 +131,7 @@ fi
         checkout = self.root / "checkout"
         checkout.mkdir()
         (checkout / "go.mod").write_text("module whatscli\n")
+        (checkout / "VERSION").write_text("0.4.0\n")
         (checkout / "bin").mkdir()
         binary = checkout / "bin/whatscli"
         binary.write_text("old binary")
@@ -114,9 +145,70 @@ fi
         checkout = self.root / "checkout"
         checkout.mkdir()
         (checkout / "go.mod").write_text("module whatscli\n")
+        (checkout / "VERSION").write_text("0.4.0\n")
         result = self.run_installer("--local", cwd=checkout)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(os.access(checkout / "bin/whatscli", os.X_OK))
+
+    def test_update_rejects_dirty_checkout(self):
+        self.update_checkout()
+        self.env["DIRTY"] = "1"
+        result = self.run_installer("--update")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("local changes", result.stderr)
+
+    def test_update_requires_expected_origin(self):
+        self.update_checkout()
+        self.env["FAKE_ORIGIN"] = "https://example.test/other.git"
+        result = self.run_installer("--update")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(Path(self.env["WHATSCLI_DIR"], "bin/whatscli").read_text(), "old binary")
+
+    def test_update_fetch_or_checkout_failure_preserves_binary(self):
+        for variable in ("FAIL_FETCH", "FAIL_CHECKOUT"):
+            with self.subTest(variable=variable):
+                self.update_checkout()
+                self.env[variable] = "1"
+                result = self.run_installer("--update")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(Path(self.env["WHATSCLI_DIR"], "bin/whatscli").read_text(), "old binary")
+                self.env.pop(variable)
+
+    def test_update_build_failure_preserves_binary(self):
+        directory, binary = self.update_checkout()
+        self.env["FAIL_BUILD"] = "1"
+        result = self.run_installer("--update")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(binary.read_text(), "old binary")
+        self.assertFalse(list((directory / "bin").glob(".whatscli-build.*")))
+
+    def test_update_rebuilds_binary_after_fast_forward(self):
+        _, binary = self.update_checkout()
+        result = self.run_installer("--update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotEqual(binary.read_text(), "old binary")
+        self.assertTrue(os.access(binary, os.X_OK))
+
+    def test_curl_style_invocation_updates_existing_install(self):
+        _, binary = self.update_checkout()
+        result = self.run_installer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotEqual(binary.read_text(), "old binary")
+        self.assertTrue(os.access(binary, os.X_OK))
+
+    def test_invalid_release_ref_is_rejected(self):
+        self.update_checkout()
+        self.env["WHATSCLI_REF"] = "latest"
+        result = self.run_installer("--update")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("stable release tag", result.stderr)
+
+    def test_latest_release_lookup_failure_does_not_replace_binary(self):
+        _, binary = self.update_checkout()
+        self.env["FAIL_RELEASE_LOOKUP"] = "1"
+        result = self.run_installer("--update")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(binary.read_text(), "old binary")
 
 
 if __name__ == "__main__":
