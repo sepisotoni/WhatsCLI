@@ -25,6 +25,11 @@ type Version struct {
 	Available bool
 }
 
+type semVersion struct {
+	core       [3]uint64
+	prerelease bool
+}
+
 func Check(ctx context.Context, current string) (Version, error) {
 	return check(ctx, current, releaseURL, &http.Client{Timeout: 10 * time.Second})
 }
@@ -55,7 +60,7 @@ func check(ctx context.Context, current, endpoint string, client *http.Client) (
 		return Version{}, errors.New("GitHub returned an invalid update response")
 	}
 	latestParts, err := parseVersion(result.Tag)
-	if err != nil {
+	if err != nil || latestParts.prerelease {
 		return Version{}, errors.New("GitHub returned an invalid release version")
 	}
 	return Version{
@@ -65,42 +70,74 @@ func check(ctx context.Context, current, endpoint string, client *http.Client) (
 	}, nil
 }
 
-func parseVersion(version string) ([3]uint64, error) {
-	var parts [3]uint64
+func parseVersion(version string) (semVersion, error) {
+	var parsed semVersion
 	version = strings.TrimPrefix(version, "v")
-	fields := strings.Split(version, ".")
+	coreAndPrerelease := strings.SplitN(version, "-", 2)
+	if len(coreAndPrerelease) == 2 {
+		if !validPrerelease(coreAndPrerelease[1]) {
+			return parsed, errors.New("invalid semantic version")
+		}
+		parsed.prerelease = true
+	}
+	fields := strings.Split(coreAndPrerelease[0], ".")
+	parts := &parsed.core
 	if len(fields) != len(parts) {
-		return parts, errors.New("invalid semantic version")
+		return parsed, errors.New("invalid semantic version")
 	}
 	for i, field := range fields {
 		if field == "" {
-			return parts, errors.New("invalid semantic version")
+			return parsed, errors.New("invalid semantic version")
 		}
 		if len(field) > 1 && field[0] == '0' {
-			return parts, errors.New("invalid semantic version")
+			return parsed, errors.New("invalid semantic version")
 		}
 		for _, char := range field {
 			if char < '0' || char > '9' {
-				return parts, errors.New("invalid semantic version")
+				return parsed, errors.New("invalid semantic version")
 			}
 		}
 		value, err := strconv.ParseUint(field, 10, 64)
 		if err != nil {
-			return parts, errors.New("invalid semantic version")
+			return parsed, errors.New("invalid semantic version")
 		}
 		parts[i] = value
 	}
-	return parts, nil
+	return parsed, nil
 }
 
-func compareVersion(left, right [3]uint64) int {
-	for i := range left {
-		if left[i] > right[i] {
+func validPrerelease(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, identifier := range strings.Split(value, ".") {
+		if identifier == "" {
+			return false
+		}
+		for _, char := range identifier {
+			if !(char >= '0' && char <= '9' || char >= 'A' && char <= 'Z' ||
+				char >= 'a' && char <= 'z' || char == '-') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func compareVersion(left, right semVersion) int {
+	for i := range left.core {
+		if left.core[i] > right.core[i] {
 			return 1
 		}
-		if left[i] < right[i] {
+		if left.core[i] < right.core[i] {
 			return -1
 		}
+	}
+	if left.prerelease != right.prerelease {
+		if left.prerelease {
+			return -1
+		}
+		return 1
 	}
 	return 0
 }

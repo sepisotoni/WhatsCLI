@@ -12,6 +12,14 @@ curl -fsSL https://raw.githubusercontent.com/sepisotoni/WhatsCLI/main/install.sh
 
 Requires Git, curl, and Go (the pinned 1.27.2 toolchain downloads automatically). On first run it installs the latest stable GitHub Release into **`~/whatscli`**, builds `~/whatscli/bin/whatscli`, links `~/.local/bin/whatscli`, never needs sudo, and never edits your shell profile. Re-running the same `curl | sh` command updates an existing clean WhatsCLI checkout from the expected GitHub origin; other existing directories are not overwritten. Pin a release with `WHATSCLI_REF=v1.2.3`, or install the development branch with `WHATSCLI_REF=main`. In a checkout use `sh install.sh --local`.
 
+Beta builds are opt-in and do not change the default stable channel:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sepisotoni/WhatsCLI/main/install.sh | sh -s -- --beta
+```
+
+For an existing clean install, rerun that command to update to the latest published beta. This channel currently requires `python3` to select the newest prerelease from GitHub.
+
 Try the real UI safely first:
 
 ```sh
@@ -19,7 +27,7 @@ whatscli -demo       # synthetic chats, disposable state, never touches WhatsApp
 whatscli             # live: consent screen, then the linked-device QR
 ```
 
-Update an installed checkout by rerunning the install command above, using `/update` (or **Check for updates** in Settings), or running `sh ~/whatscli/install.sh --update`. In-app checks are never automatic: WhatsCLI compares the installed semantic version with the latest stable GitHub Release and offers the update only when that release is newer. Updates require a clean checkout with the expected GitHub origin; the installer checks out the selected release and replaces the binary only after a successful build. Updating does not skip or alter the usual welcome, agreement, or device-pairing flow. The root `VERSION` file is the version source; pushing a matching `vX.Y.Z` tag runs the release workflow and publishes GitHub release notes.
+Update an installed checkout by rerunning the stable install command above, using `/update` (or **Check for updates** in Settings), or running `sh ~/whatscli/install.sh --update`. In-app checks target stable releases only. To update to the latest beta from a terminal, rerun the installer with `--beta` (or use `sh ~/whatscli/install.sh --beta --update`). Updates require a clean checkout with the expected GitHub origin; the installer checks out the selected release and replaces the binary only after a successful build. Updating does not skip or alter the usual welcome, agreement, or device-pairing flow. The root `VERSION` file is the next stable version; pushing `vX.Y.Z-beta.N` publishes a GitHub prerelease, while pushing the matching `vX.Y.Z` tag publishes a stable release.
 
 ## The interface
 

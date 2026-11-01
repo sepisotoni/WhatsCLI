@@ -74,7 +74,7 @@ History uses `modernc.org/sqlite`, one database connection, WAL journaling, fore
 - `account_revisions`: retained original/edit bodies, observation-order revision numbers, source timestamps, and event identities.
 - `account_statuses`: account-scoped status text and source time; queries and new updates prune entries older than 24 hours.
 
-Release versions come from the root `VERSION` file. Stable tags use `vX.Y.Z`; the release workflow validates the tag against `VERSION`, runs Go checks, and publishes GitHub release notes. The installer and in-app checker follow the latest stable release by default; `WHATSCLI_REF=main` opts into development builds.
+Release versions come from the root `VERSION` file. Stable tags use `vX.Y.Z`; beta tags use `vX.Y.Z-beta.N`. The release workflow validates matching tags, runs checks, and publishes stable releases or prereleases. The installer and in-app checker follow stable releases by default; `--beta` opts into the latest published beta in the installer.
 - `account_reactions`: latest reaction per account/chat/target/sender; removals delete the projection.
 - `history_events`: scoped event identities for transactional deduplication.
 

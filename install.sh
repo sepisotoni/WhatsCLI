@@ -13,12 +13,18 @@ command -v mktemp >/dev/null 2>&1 || fail "mktemp is required."
 directory=${WHATSCLI_DIR:-"$HOME/whatscli"}
 bindir=${WHATSCLI_BIN_DIR:-"$HOME/.local/bin"}
 ref=${WHATSCLI_REF:-}
+channel=stable
+action=install
 
 build() {
     go mod download
     go mod verify
-    version=$(sed -n '1p' VERSION)
-    printf '%s\n' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' || fail "VERSION must contain a stable semantic version (for example 1.2.3)."
+    version=${ref#v}
+    if [ "$ref" = "main" ] || [ -z "$ref" ]; then
+        version=$(sed -n '1p' VERSION)
+    fi
+    printf '%s\n' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-beta\.(0|[1-9][0-9]*))?$' ||
+        fail "Release version must be stable X.Y.Z or beta X.Y.Z-beta.N."
     mkdir -p bin
     # Rename instead of writing over a running executable.
     artifact=$(mktemp bin/.whatscli-build.XXXXXX)
@@ -34,18 +40,36 @@ build() {
 resolve_ref() {
     if [ -z "$ref" ]; then
         command -v curl >/dev/null 2>&1 || fail "curl is required to find the latest stable GitHub release."
-        response=$(curl -fsSL --max-time 15 -H 'Accept: application/vnd.github+json' \
-            https://api.github.com/repos/sepisotoni/WhatsCLI/releases/latest) ||
-            fail "Could not find the latest stable GitHub release."
-        ref=$(printf '%s\n' "$response" | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p')
+        if [ "$channel" = "beta" ]; then
+            command -v python3 >/dev/null 2>&1 || fail "python3 is required to select the latest beta release."
+            response=$(curl -fsSL --max-time 15 -H 'Accept: application/vnd.github+json' \
+                'https://api.github.com/repos/sepisotoni/WhatsCLI/releases?per_page=100') ||
+                fail "Could not find the latest beta GitHub release."
+            ref=$(printf '%s' "$response" | python3 -c '
+import json, re, sys
+releases = json.load(sys.stdin)
+pattern = re.compile(r"^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)-beta\.(?:0|[1-9][0-9]*)$")
+for release in releases:
+    tag = release.get("tag_name", "")
+    if release.get("prerelease") and not release.get("draft") and pattern.fullmatch(tag):
+        print(tag)
+        break
+') || fail "Could not parse the beta release list."
+            [ -n "$ref" ] || fail "No published beta releases were found."
+        else
+            response=$(curl -fsSL --max-time 15 -H 'Accept: application/vnd.github+json' \
+                https://api.github.com/repos/sepisotoni/WhatsCLI/releases/latest) ||
+                fail "Could not find the latest stable GitHub release."
+            ref=$(printf '%s\n' "$response" | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p')
+        fi
     fi
     case "$ref" in
         main) ;;
         v*)
-            printf '%s\n' "$ref" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' ||
-                fail "WHATSCLI_REF must be main or a stable release tag such as v1.2.3."
+            printf '%s\n' "$ref" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-beta\.(0|[1-9][0-9]*))?$' ||
+                fail "WHATSCLI_REF must be main or a stable/beta release tag such as v1.2.3 or v1.3.0-beta.1."
             ;;
-        *) fail "WHATSCLI_REF must be main or a stable release tag such as v1.2.3." ;;
+        *) fail "WHATSCLI_REF must be main or a stable/beta release tag." ;;
     esac
 }
 
@@ -78,7 +102,18 @@ update() {
     fi
 }
 
-if [ "${1:-}" = "--local" ] && [ "$#" -eq 1 ]; then
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --beta) channel=beta ;;
+        --update) action=update ;;
+        --local) action=local ;;
+        *) fail "Unknown option: $1. Use --beta, --update, or --local." ;;
+    esac
+    shift
+done
+
+if [ "$action" = local ]; then
+    [ "$channel" = stable ] || fail "--beta cannot be combined with --local."
     [ -f go.mod ] && grep -q '^module whatscli$' go.mod || fail "Run --local from the WhatsCLI repository root."
     step "Building this checkout without pulling or changing your source"
     build
@@ -86,7 +121,7 @@ if [ "${1:-}" = "--local" ] && [ "$#" -eq 1 ]; then
     exit 0
 fi
 
-if [ "${1:-}" = "--update" ] && [ "$#" -eq 1 ]; then
+if [ "$action" = update ]; then
     [ "$(uname -s)" = Linux ] || fail "WhatsCLI currently supports Linux only (including WSL2)."
     update
     exit 0
@@ -103,7 +138,6 @@ fi
 [ ! -e "$directory" ] || fail "$directory already exists; nothing was changed. See README.md for safe update instructions."
 
 printf '\n\033[1;32m  WhatsCLI\033[0m  Your conversations. Your terminal.\n\n'
-[ "$#" -eq 0 ] || fail "This installer accepts no arguments; use WHATSCLI_DIR or WHATSCLI_REF to customize it."
 resolve_ref
 mkdir -p "$(dirname "$directory")" "$bindir"
 work=$(mktemp -d "$(dirname "$directory")/.whatscli-install.XXXXXX")

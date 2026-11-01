@@ -53,7 +53,12 @@ fi
         self.tool("curl", """#!/bin/sh
 set -eu
 [ "${FAIL_RELEASE_LOOKUP:-}" != 1 ] || exit 1
-printf '{"tag_name":"v0.4.0"}\\n'
+case "$*" in
+  *'releases?per_page=100'*)
+    printf '[{"tag_name":"v0.5.0-beta.1","prerelease":true,"draft":false},{"tag_name":"v0.4.0","prerelease":false,"draft":false}]\\n'
+    ;;
+  *) printf '{"tag_name":"v0.4.0"}\\n' ;;
+esac
 """)
 
     def tool(self, name, source):
@@ -196,12 +201,19 @@ printf '{"tag_name":"v0.4.0"}\\n'
         self.assertNotEqual(binary.read_text(), "old binary")
         self.assertTrue(os.access(binary, os.X_OK))
 
+    def test_beta_flag_selects_latest_prerelease(self):
+        _, binary = self.update_checkout()
+        result = self.run_installer("--beta", "--update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("v0.5.0-beta.1", result.stdout)
+        self.assertNotEqual(binary.read_text(), "old binary")
+
     def test_invalid_release_ref_is_rejected(self):
         self.update_checkout()
         self.env["WHATSCLI_REF"] = "latest"
         result = self.run_installer("--update")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("stable release tag", result.stderr)
+        self.assertIn("stable/beta release tag", result.stderr)
 
     def test_latest_release_lookup_failure_does_not_replace_binary(self):
         _, binary = self.update_checkout()

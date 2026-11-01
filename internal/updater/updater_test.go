@@ -95,9 +95,23 @@ func TestCheckRequiresValidEmbeddedVersion(t *testing.T) {
 }
 
 func TestParseVersionRejectsNonSemver(t *testing.T) {
-	for _, version := range []string{"", "v1.2", "1.2.3-beta", "01.2.3", "1.x.3"} {
+	for _, version := range []string{"", "v1.2", "1.2.3-beta..1", "01.2.3", "1.x.3"} {
 		if _, err := parseVersion(version); err == nil {
 			t.Errorf("accepted invalid version %q", version)
 		}
+	}
+}
+
+func TestPrereleaseDoesNotOutrankMatchingStable(t *testing.T) {
+	beta, err := parseVersion("v0.5.0-beta.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stable, err := parseVersion("0.5.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compareVersion(stable, beta) <= 0 {
+		t.Fatal("matching stable release must outrank beta")
 	}
 }

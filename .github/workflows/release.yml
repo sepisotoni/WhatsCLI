@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,12 +23,26 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          test "$RELEASE_TAG" = "v$(cat VERSION)"
+          if [[ "$RELEASE_TAG" == *-beta.* ]]; then
+            [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-beta\.(0|[1-9][0-9]*)$ ]]
+            test "${RELEASE_TAG%-beta.*}" = "v$(cat VERSION)"
+          else
+            test "$RELEASE_TAG" = "v$(cat VERSION)"
+          fi
           go test ./...
           go vet ./...
           python3 -m unittest discover -s tests -p '*_test.py'
           sh -n install.sh
+  release:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          if [[ "$GITHUB_REF_NAME" == *-beta.* ]]; then
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --prerelease
+          else
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          fi
