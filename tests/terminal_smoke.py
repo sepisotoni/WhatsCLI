@@ -153,7 +153,7 @@ def hangup(binary):
 def offline_flow(binary):
     s = Session(binary, ["-offline"])
     first = s.expect("Welcome to") + s.pump(0.3)
-    assert b"Get started" in first and b"Exit" in first, "welcome buttons missing"
+    assert b"Continue" in first and b"Exit" in first, "welcome buttons missing"
     s.send(b"\r")
     s.expect("Independent and unofficial")
     s.send(b" ")
