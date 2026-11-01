@@ -414,7 +414,7 @@ func (m *Model) toggleArchive() {
 func (m Model) filteredCommands() []string {
 	var matches []string
 	for _, command := range commands {
-		if !m.settings.Accepted() && command != "help" && command != "settings" && command != "quit" {
+		if (!m.settings.Accepted() || m.onboardingPending) && command != "help" && command != "settings" && command != "quit" {
 			continue
 		}
 		if strings.Contains(command, strings.ToLower(m.filter)) {

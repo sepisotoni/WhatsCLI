@@ -61,7 +61,7 @@ func TestSnapshots(t *testing.T) {
 	m.openOverlay(helpScreen)
 	write("help", m)
 	m = New(nil)
-	m.width, m.height = 100, 30
+	m.width, m.height = 130, 42
 	write("welcome", m)
 	m.active, m.consentAccepted = consentScreen, true
 	m.width, m.height = 130, 42

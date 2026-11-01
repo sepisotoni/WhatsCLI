@@ -204,6 +204,7 @@ type Model struct {
 	updateVersion                      updater.Version
 	updateNotice                       string
 	updateChecking, updateRunning      bool
+	onboardingPending                  bool
 }
 
 var commands = []string{"conversations", "new chat", "statuses", "files", "meta ai", "connect", "help", "settings", "update", "logout", "quit"}
@@ -221,9 +222,7 @@ func NewWithRuntime(runtime *Runtime, settings config.Settings, settingsPath str
 	m := New(runtime.Repo)
 	m.runtime, m.settings, m.settingsPath, m.ctx = runtime, settings, settingsPath, runtime.ctx
 	m.consentAccepted = settings.Accepted()
-	if settings.Accepted() {
-		m.active = inboxScreen
-	}
+	m.onboardingPending = true
 	return m
 }
 
@@ -255,12 +254,6 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{pulse()}
 	if m.runtime != nil {
 		cmds = append(cmds, m.wait())
-	}
-	if m.settings.Accepted() {
-		cmds = append(cmds, m.loadChats(nil))
-		if !m.demo {
-			cmds = append(cmds, m.connect())
-		}
 	}
 	return tea.Batch(cmds...)
 }
@@ -606,6 +599,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			mouse = tea.EnableMouseAllMotion
 		}
 		if msg.consent {
+			m.onboardingPending = false
 			if m.runtime != nil {
 				m.runtime.AllowConnection()
 			}

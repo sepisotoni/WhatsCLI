@@ -2,6 +2,7 @@ package app
 
 import (
 	"strconv"
+	"strings"
 
 	"whatscli/internal/ui"
 )
@@ -160,37 +161,44 @@ func (s *scene) welcome() {
 	if m.settings.Wallpaper() {
 		ui.Doodle(c, frame.Inset(1), ui.Ink)
 	}
-	icon := H >= 24
-	bh := 11
-	if icon {
-		bh = 20
-	}
-	y := max(1, (H-bh)/2)
 	cx := W / 2
-	if icon {
-		s.chatIcon(cx-7, y)
+	compact := H < 28 || W < 53
+	titleY := max(1, (H-12)/2)
+	if !compact && H >= 28 {
+		iconY := max(1, titleY-11)
+		s.chatIcon(cx-4, iconY)
 		dots := ui.Mix(ui.Accent, ui.Panel, .55)
-		c.Text(cx-7-3-8, y+3, "........", dots, ui.Panel, false)
-		c.Text(cx+7+4, y+3, "........", dots, ui.Panel, false)
-		y += 9
+		lineW := min(9, max(3, (W-32)/2))
+		c.Text(max(2, cx-4-lineW-3), iconY+3, strings.Repeat("·", lineW), dots, ui.Panel, false)
+		c.Text(cx+5, iconY+3, strings.Repeat("·", lineW), dots, ui.Panel, false)
 	}
 	title := "Welcome to WhatsCLI"
 	tx := cx - ui.StringWidth(title)/2
-	c.Text(tx, y, "Welcome to ", ui.Hex(0xCDF7E3), ui.Panel, true)
-	c.Text(tx+11, y, "WhatsCLI", ui.Accent, ui.Panel, true)
+	c.Text(tx, titleY, "Welcome to ", ui.Hex(0xCDF7E3), ui.Panel, true)
+	c.Text(tx+11, titleY, "WhatsCLI", ui.Accent, ui.Panel, true)
 	sub := "Your conversations. Your terminal."
-	c.Text(cx-ui.StringWidth(sub)/2, y+2, sub, ui.Dim, ui.Panel, false)
-	c.HLine(cx-18, y+4, 36, '─', ui.Border)
-	by := y + 6
-	start := ui.R(cx-21, by, 24, 3)
-	exit := ui.R(cx+6, by, 15, 3)
-	s.primary(start, "Get started  →", "welcome:start", true)
-	s.outline(exit, "Exit", "welcome:exit", m.welcomeFocus == 1)
-	if m.welcomeFocus == 0 {
-		c.Put(start.X+2, by+1, '▸', ui.AccentDark, ui.Accent, true)
+	c.Text(cx-ui.StringWidth(sub)/2, titleY+4, sub, ui.Dim, ui.Panel, false)
+	c.HLine(cx-18, titleY+9, 36, '─', ui.Border)
+	by := titleY + 13
+	startW, exitW, gap := 27, 21, 3
+	startLabel := "Get started  →"
+	if compact {
+		by = min(H-2, titleY+5)
+		startW, exitW, gap = 16, 10, 2
+		startLabel = "Start →"
 	}
-	hint := "Enter · continue    Tab · switch button    / · commands    q · quit"
-	c.Text(cx-ui.StringWidth(hint)/2, H-2, ui.Truncate(hint, W-4, "…"), ui.Faint, ui.Panel, false)
+	groupW := startW + exitW + gap
+	start := ui.R(max(1, cx-groupW/2), by, startW, 3)
+	exit := ui.R(start.Right()+gap, by, exitW, 3)
+	if compact {
+		start.H, exit.H = 1, 1
+	}
+	s.primary(start, startLabel, "welcome:start", true)
+	s.outline(exit, "Exit", "welcome:exit", m.welcomeFocus == 1)
+	hint := "Enter · continue    Tab · choose    q · quit"
+	if H >= 12 {
+		c.Text(cx-ui.StringWidth(hint)/2, H-2, ui.Truncate(hint, W-4, "…"), ui.Faint, ui.Panel, false)
+	}
 }
 
 // ---- disclaimer & consent ----
@@ -564,21 +572,9 @@ func (s *scene) qrFull(q *ui.QRCode, qw, qh int) {
 // chatIcon draws the thick speech-bubble terminal icon from the mock-ups.
 func (s *scene) chatIcon(x, y int) {
 	c := s.c
-	w, h := 15, 6
-	c.Fill(ui.R(x, y, w, h), ui.Accent)
-	c.Fill(ui.R(x+2, y+1, w-4, h-2), ui.Panel)
-	for i := 1; i < w-1; i++ {
-		c.Put(x+i, y, '▄', ui.Accent, ui.Panel, false)
-		c.Put(x+i, y+h-1, '▀', ui.Accent, ui.Panel, false)
-	}
-	for _, p := range []struct {
-		x, y int
-		r    rune
-	}{{x, y, '▗'}, {x + w - 1, y, '▖'}, {x, y + h - 1, '▝'}, {x + w - 1, y + h - 1, '▘'}} {
-		c.Put(p.x, p.y, p.r, ui.Accent, ui.Panel, false)
-	}
-	c.Text(x+5, y+2, "╲", ui.Accent, ui.Panel, true)
-	c.Text(x+5, y+3, "╱", ui.Accent, ui.Panel, true)
-	c.Text(x+7, y+3, "▁▁", ui.Accent, ui.Panel, true)
-	c.Text(x+2, y+h, "◣", ui.Accent, ui.BG, true)
+	icon := ui.R(x, y, 8, 4)
+	c.Box(icon, ui.Accent, ui.Hex(0x061C14))
+	c.Text(x+2, y+1, ">_", ui.Accent, ui.Hex(0x061C14), true)
+	c.Put(x+2, y+4, '╰', ui.Accent, ui.Panel, true)
+	c.Put(x+3, y+4, '╲', ui.Accent, ui.Panel, true)
 }

@@ -12,7 +12,7 @@ import (
 )
 
 func (m *Model) openUpdate() tea.Cmd {
-	if !m.settings.Accepted() {
+	if !m.settings.Accepted() || m.onboardingPending {
 		m.setNotice("Accept the agreement before using the update checker.", true)
 		return nil
 	}

@@ -25,7 +25,7 @@ python3 tests/terminal_smoke.py ./whats-cli
 
 The race detector requires a supported platform/toolchain and its native compiler prerequisites. The automated suite uses fake clients, synthetic upstream events/QR data, and temporary files/databases. Some session tests generate synthetic device identity material locally but never pair it or connect to a service. No WhatsApp account, real device session, API key, or existing private history is required. Initial module/toolchain downloads may require network access; test logic does not connect to WhatsApp.
 
-Do not start the default live-mode app to test a local UI change: persisted consent can auto-connect. Use `-offline` and a disposable state directory.
+Do not continue through onboarding in the default live-mode app to test a local UI change: confirming the saved agreement begins connection. Use `-offline` and a disposable state directory.
 
 ## Existing coverage
 

@@ -103,6 +103,7 @@ func demoPhoto() *ui.Photo {
 func DemoModel(runtime *Runtime, settings config.Settings, settingsPath string) Model {
 	m := NewWithRuntime(runtime, settings, settingsPath)
 	m.demo = true
+	m.onboardingPending = false
 	m.demoSubtitle = map[string]string{demoChats[0].id: "6 members"}
 	m.active, m.chatID, m.chatTitle = chatScreen, demoChats[0].id, demoChats[0].title
 	m.conversations, _ = m.repo.Conversations(m.ctx, m.account, nil, 50)

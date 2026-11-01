@@ -41,6 +41,51 @@ func TestConsentMustSaveBeforePairing(t *testing.T) {
 	}
 }
 
+func TestWelcomeMatchesReferenceAndOpensAgreement(t *testing.T) {
+	m := New(nil)
+	m.width, m.height = 100, 30
+	view := plain(m)
+	for _, text := range []string{"Welcome to WhatsCLI", ">_", "Your conversations. Your terminal.", "Get started", "Exit"} {
+		if !strings.Contains(view, text) {
+			t.Errorf("welcome screen missing %q", text)
+		}
+	}
+	m, _ = press(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.active != consentScreen {
+		t.Fatal("Get started did not open the agreement screen")
+	}
+}
+
+func TestReturningUserFollowsWelcomeAgreementPairingFlow(t *testing.T) {
+	r, client := testRuntime(t, true)
+	m := NewWithRuntime(r, config.Settings{ConsentVersion: config.ConsentVersion}, "")
+	if m.active != welcomeScreen || !m.onboardingPending {
+		t.Fatal("returning user did not start at welcome")
+	}
+	_ = m.Init()
+	if client.connects.Load() != 0 {
+		t.Fatal("runtime connected before the user completed onboarding")
+	}
+	for _, command := range m.filteredCommands() {
+		if command == "connect" || command == "conversations" || command == "update" {
+			t.Fatalf("onboarding command available before agreement: %s", command)
+		}
+	}
+	m, _ = press(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.active != consentScreen || !m.consentAccepted {
+		t.Fatal("welcome did not advance to the already-accepted agreement")
+	}
+	m, cmd := press(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("agreement confirmation did not continue")
+	}
+	next, _ := m.Update(cmd())
+	m = next.(Model)
+	if m.active != pairingScreen || m.onboardingPending {
+		t.Fatal("agreement did not advance to device pairing")
+	}
+}
+
 func TestPaletteCannotBypassConsentAndRestoresScreen(t *testing.T) {
 	m := New(nil)
 	m, _ = press(m, runeKey("/"))
