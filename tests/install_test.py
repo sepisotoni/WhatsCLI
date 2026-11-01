@@ -92,6 +92,12 @@ esac
         self.assertEqual(link.resolve(), binary)
         self.assertFalse(list(self.root.glob(".whatscli-install.*")))
 
+    def test_fresh_beta_install_is_explicit_opt_in(self):
+        result = self.run_installer("--beta")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("v0.5.0-beta.1", result.stdout)
+        self.assertTrue(os.access(Path(self.env["WHATSCLI_DIR"]) / "bin/whatscli", os.X_OK))
+
     def test_existing_checkout_is_never_overwritten(self):
         directory = Path(self.env["WHATSCLI_DIR"])
         directory.mkdir()
