@@ -1,7 +1,7 @@
-// Package webpair serves the pairing QR on a loopback-only web page for
-// terminals that cannot display it. The QR is a credential: the server binds to
-// 127.0.0.1, uses an unguessable path, rejects foreign Host headers (DNS
-// rebinding), sends no-store headers, and stops itself after a short TTL.
+// Package webpair serves the pairing QR on a temporary LAN-accessible page for
+// terminals that cannot display it. The QR is a credential: the server binds
+// to all interfaces, uses an unguessable path, accepts only local Host headers,
+// sends no-store headers, and stops itself after a short TTL.
 package webpair
 
 import (
@@ -32,22 +32,30 @@ func (s *Server) Stop() {
 	}
 }
 
-// Start listens on a random loopback port. qr returns the current pairing
-// payload ("" while none is available).
+// Start listens on a random port on all interfaces. qr returns the current
+// pairing payload ("" while none is available).
 func Start(ctx context.Context, qr func() string, ttl time.Duration) (*Server, error) {
 	token := make([]byte, 16)
 	if _, err := rand.Read(token); err != nil {
 		return nil, err
 	}
+	lanIP, localIPs, err := lanIPv4()
+	if err != nil {
+		return nil, err
+	}
 	prefix := "/" + hex.EncodeToString(token) + "/"
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		return nil, errors.New("could not open a local port")
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
+	allowedHosts := map[string]bool{"127.0.0.1": true, "localhost": true, "::1": true}
+	for _, ip := range localIPs {
+		allowedHosts[ip.String()] = true
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc(prefix, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != prefix || !localHost(r.Host) {
+		if r.URL.Path != prefix || !localHost(r.Host, allowedHosts) {
 			http.NotFound(w, r)
 			return
 		}
@@ -72,19 +80,63 @@ func Start(ctx context.Context, qr func() string, ttl time.Duration) (*Server, e
 		}
 		stop()
 	}()
-	return &Server{URL: fmt.Sprintf("http://127.0.0.1:%d%s", port, prefix), Port: port, stop: stop}, nil
+	return &Server{URL: fmt.Sprintf("http://%s:%d%s", lanIP, port, prefix), Port: port, stop: stop}, nil
 }
 
-func localHost(host string) bool {
+func lanIPv4() (net.IP, []net.IP, error) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, nil, errors.New("could not find a local network address for web pairing")
+	}
+	var localIPs []net.IP
+	var selected net.IP
+	selectedPreferred := false
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip := ipNet.IP.To4()
+			if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
+				continue
+			}
+			localIPs = append(localIPs, ip)
+			preferred := !virtualInterface(iface.Name)
+			if selected == nil || preferred && !selectedPreferred || preferred == selectedPreferred && ip.IsPrivate() && !selected.IsPrivate() {
+				selected = ip
+				selectedPreferred = preferred
+			}
+		}
+	}
+	if selected == nil {
+		return nil, nil, errors.New("web pairing needs an active IPv4 network address")
+	}
+	return selected, localIPs, nil
+}
+
+func virtualInterface(name string) bool {
+	for _, prefix := range []string{"docker", "br-", "veth", "virbr", "podman", "cni", "flannel"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func localHost(host string, allowed map[string]bool) bool {
 	u, err := url.Parse("//" + host)
 	if err != nil {
 		return false
 	}
-	switch strings.ToLower(u.Hostname()) {
-	case "127.0.0.1", "localhost", "::1":
-		return true
-	}
-	return false
+	return allowed[strings.ToLower(u.Hostname())]
 }
 
 func svg(payload string) string {
@@ -127,5 +179,5 @@ li::before{content:counter(s);display:grid;place-items:center;width:34px;height:
 .note{border:1px solid #0f5238;border-radius:10px;padding:10px 14px}.wait{align-self:center}
 </style><main><section><h1>LINK <b>A DEVICE</b></h1><p>Log in to WhatsApp</p>
 <ol><li>On your phone, open WhatsApp.</li><li>Go to Settings or &#8942; &rarr; Linked devices.</li><li>Select Link a device and scan the QR.</li><li>Keep your terminal open until linked.</li></ol>
-<p class="note">The code refreshes automatically. Never share it or this page.</p></section>` + body + `</main></html>`
+<p class="note">The code refreshes automatically. Anyone who can access this page can link a device. Share only with people you trust.</p></section>` + body + `</main></html>`
 }

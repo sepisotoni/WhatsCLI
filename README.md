@@ -40,9 +40,9 @@ The UI is drawn on a cell canvas where **every cell has an explicit background**
 
 ## Linking a device
 
-Every launch begins at **Welcome**, then continues through the agreement to **Link a device**. Returning users see their saved agreement pre-accepted and confirm it before WhatsCLI reconnects. The QR uses the lowest error-correction level and half-block cells, so a normal WhatsApp code (≈60×30 cells) is shown **inline** in a 130×42 terminal. If the terminal is too small it switches to a full-screen QR automatically, or tells you the size it needs. The code is a credential: never share it.
+Every launch begins at **Welcome**, then continues through the agreement to **Link a device**. The agreement must be manually accepted on each launch. The QR uses the lowest error-correction level and half-block cells, so a normal WhatsApp code (≈60×30 cells) is shown **inline** in a 130×42 terminal. If the terminal is too small it switches to a full-screen QR automatically, or tells you the size it needs. The code is a credential: only share it with people you trust.
 
-**Need help?** After two minutes without pairing, a *Need help? Open web QR* button appears (key `h`, or `/web`). It opens a **loopback-only** port with an unguessable URL, rejects foreign `Host` headers, sends no-store headers and shuts itself down after 15 minutes or when pairing succeeds. WhatsCLI attempts to open the page in a browser on the same machine. Over SSH, forward the port (the command is shown) and open the URL in your local browser. The terminal QR is always the primary route.
+**Need help?** After two minutes without pairing, a *Need help? Open web QR* button appears (key `h`, or `/web`). It opens a random port on all network interfaces with an unguessable LAN URL, rejects foreign `Host` headers, sends no-store headers and shuts itself down after 15 minutes or when pairing succeeds. Anyone who can reach the URL can scan the QR and link a device; share the URL only with people you trust. WhatsCLI attempts to open the page in a browser on the same machine. Over SSH, forward the port and open the URL from your local browser. The terminal QR is always the primary route.
 
 ## Keyboard and mouse
 

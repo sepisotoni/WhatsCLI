@@ -33,12 +33,15 @@ func TestServesQROnlyOnTokenPathAndLocalHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Stop()
-	if !strings.HasPrefix(s.URL, "http://127.0.0.1:") {
-		t.Fatal("must bind loopback", s.URL)
+	if !strings.HasPrefix(s.URL, "http://") || strings.HasPrefix(s.URL, "http://127.0.0.1:") {
+		t.Fatal("must provide a LAN address", s.URL)
 	}
 	status, body, header := get(t, s.URL, "")
 	if status != 200 || !strings.Contains(body, "<svg") || strings.Contains(body, "synthetic-fixture") {
 		t.Fatal("QR page wrong or leaked payload text")
+	}
+	if !strings.Contains(body, "Anyone who can access this page can link a device") {
+		t.Fatal("missing device-link access warning")
 	}
 	if header.Get("Cache-Control") != "no-store" || !strings.Contains(header.Get("Content-Security-Policy"), "default-src 'none'") {
 		t.Fatal("missing security headers")
@@ -52,6 +55,11 @@ func TestServesQROnlyOnTokenPathAndLocalHost(t *testing.T) {
 	}
 	if status, _, _ := get(t, s.URL, "localhost:9999"); status != 200 {
 		t.Fatal("rejected forwarded localhost port")
+	}
+	host := strings.TrimPrefix(s.URL, "http://")
+	host = host[:strings.IndexByte(host, ':')]
+	if status, _, _ := get(t, s.URL, host+":9999"); status != 200 {
+		t.Fatal("rejected local LAN host")
 	}
 	if _, body, _ := get(t, s.URL, ""); strings.Contains(body, "Waiting") {
 		t.Fatal("unexpected waiting page")
