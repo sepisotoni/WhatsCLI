@@ -1,0 +1,10 @@
+{
+  "description": "Bootstraps imported projects and verifies deployment and preview setup, helping developers prepare initial Figma Make imports for reliable publishing.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
