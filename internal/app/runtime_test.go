@@ -40,7 +40,7 @@ func (c *fakeClient) SendFile(ctx context.Context, chat, path, id string) (histo
 	return c.SendText(ctx, chat, "[document]", id)
 }
 
-func testRuntime(t *testing.T, consent bool) (*Runtime, *fakeClient) {
+func testRuntime(t testing.TB, consent bool) (*Runtime, *fakeClient) {
 	t.Helper()
 	repo, err := history.Open(filepath.Join(t.TempDir(), "history.db"))
 	if err != nil {

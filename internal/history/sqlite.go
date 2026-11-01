@@ -224,17 +224,20 @@ func (r *SQLiteRepository) Conversations(ctx context.Context, account string, be
 	if err != nil {
 		return nil, err
 	}
-	query := `SELECT account_id,id,title,updated_at,
-		COALESCE((SELECT CASE WHEN m.deleted_at IS NOT NULL THEN '[deleted; retained]' ELSE m.body END
-		FROM account_messages m WHERE m.account_id=account_conversations.account_id
-		AND m.chat_id=account_conversations.id ORDER BY m.created_at DESC,m.id DESC LIMIT 1),'')
-		FROM account_conversations WHERE account_id=?`
+	query := `SELECT c.account_id,c.id,c.title,c.updated_at,
+		COALESCE(CASE WHEN m.deleted_at IS NOT NULL THEN '[deleted; retained]' ELSE m.body END,''),
+		COALESCE(m.sender,''),COALESCE(m.from_me,0),COALESCE(m.status,'')
+		FROM account_conversations c
+		LEFT JOIN account_messages m ON m.account_id=c.account_id AND m.chat_id=c.id AND m.id=(
+			SELECT m2.id FROM account_messages m2 WHERE m2.account_id=c.account_id AND m2.chat_id=c.id
+			ORDER BY m2.created_at DESC,m2.id DESC LIMIT 1)
+		WHERE c.account_id=?`
 	args := []any{account}
 	if before != nil {
-		query += ` AND (updated_at<? OR (updated_at=? AND id<?))`
+		query += ` AND (c.updated_at<? OR (c.updated_at=? AND c.id<?))`
 		args = append(args, formatTime(before.Time), formatTime(before.Time), before.ID)
 	}
-	query += ` ORDER BY updated_at DESC,id DESC LIMIT ?`
+	query += ` ORDER BY c.updated_at DESC,c.id DESC LIMIT ?`
 	rows, err := r.db.QueryContext(ctx, query, append(args, limit)...)
 	if err != nil {
 		return nil, err
@@ -244,7 +247,7 @@ func (r *SQLiteRepository) Conversations(ctx context.Context, account string, be
 	for rows.Next() {
 		var c Conversation
 		var at string
-		if err := rows.Scan(&c.AccountID, &c.ID, &c.Title, &at, &c.LastBody); err != nil {
+		if err := rows.Scan(&c.AccountID, &c.ID, &c.Title, &at, &c.LastBody, &c.LastSender, &c.LastFromMe, &c.LastStatus); err != nil {
 			return nil, err
 		}
 		c.UpdatedAt, err = parseTime(at)
@@ -349,3 +352,31 @@ func newID() (string, error) {
 
 func formatTime(t time.Time) string             { return t.UTC().Format("2006-01-02T15:04:05.000000000Z07:00") }
 func parseTime(value string) (time.Time, error) { return time.Parse(time.RFC3339Nano, value) }
+
+// IncomingSince lists non-deleted incoming messages newer than since (bounded),
+// letting the UI derive per-chat unread counts without a schema change.
+func (r *SQLiteRepository) IncomingSince(ctx context.Context, account string, since time.Time) ([]Stamp, error) {
+	if account == "" {
+		return nil, errors.New("account is required")
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT chat_id,created_at FROM account_messages
+		WHERE account_id=? AND from_me=0 AND deleted_at IS NULL AND created_at>? ORDER BY created_at DESC LIMIT 5000`,
+		account, formatTime(since))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var stamps []Stamp
+	for rows.Next() {
+		var chat, at string
+		if err := rows.Scan(&chat, &at); err != nil {
+			return nil, err
+		}
+		t, err := parseTime(at)
+		if err != nil {
+			return nil, err
+		}
+		stamps = append(stamps, Stamp{chat, t})
+	}
+	return stamps, rows.Err()
+}

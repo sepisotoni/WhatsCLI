@@ -2,14 +2,17 @@
 
 > Static inspection plus previous audit results, 2026-10-31. Some items are **confirmed by static analysis**, while others are **potential risks requiring reproduction**. Not an exhaustive line-by-line audit. This document does not mean tests were rerun.
 
-| ID | Priority | Confidence | File(s) | Finding / next action |
+| ID | Priority | Status | File(s) | Finding / resolution |
 |---|---|---|---|---|
-| WC-001 | Medium | Static-analysis finding | `internal/messaging/whatsmeow.go:319` | `whatsmeow.GenerateMessageID()` was flagged deprecated. Migrate to supported client-based generation while preserving stable IDs for pending sends and before-connect behavior. Verify against installed whatsmeow version. |
-| WC-002 | Medium | Code-level race risk | `internal/config/config.go` (`Load`) | `Lstat(path)` is followed by `os.Open(path)`: a path swap could cause a different file/symlink to be opened. Use no-follow descriptor-based file opening plus post-open `fstat` validation, reusing `internal/privatefs` where suitable. No exploit reproduced. |
-| WC-003 | Medium | Reliability test needed | `internal/app/runtime.go` (`Close`, `Send`) | Shutdown waits on transport/event producers and accepted operations; test blocked network sends, DB delays, event backpressure, concurrent Connect/Close/Logout. Potential stall; **deadlock not confirmed**. |
-| WC-004 | Low | Dead-code scan finding | `internal/ui/styles.go:14` | `Panel` was reported unreachable by dead-code analysis. Confirm intended use before deleting or wiring up. |
-| WC-005 | Low | Static-analysis finding | `internal/ui/text_test.go:9,11` | Literal Unicode U+202E bidi override in tests was flagged. Express as `\u202e` or an explicit escaped literal with a clarifying comment. |
-| WC-006 | Low | Maintainability | `internal/app/model.go` | Large UI model; consider splitting by screens/actions only after functional tests. Not an identified functional bug. |
+| WC-001 | Medium | **Fixed** | `internal/messaging/whatsmeow.go` | Deprecated `GenerateMessageID` replaced by a local generator that mirrors the upstream scheme and takes no operation lock, so it cannot stall behind `Connect`. |
+| WC-002 | Medium | **Fixed** | `internal/config/config.go` | `Lstat`+`Open` race replaced by `O_NOFOLLOW` open and descriptor `fstat` validation (also used for the new `ui-state.json`). |
+| WC-003 | Medium | Open | `internal/app/runtime.go` | Shutdown stress tests (blocked sends, DB delays, concurrent Connect/Close/Logout) still to be written; deadlock not confirmed. |
+| WC-004 | Low | **Fixed** | `internal/ui` | Unused `Panel` helper removed with the old lipgloss styles. |
+| WC-005 | Low | **Fixed** | `internal/ui/text_test.go` | The bidi override is now written as the escape `\u202e` instead of a literal character. |
+| WC-006 | Low | Open | `internal/app` | Model is large; now split by screen file (`keys`, `view`, `workspace`, `overlays`, `explorer`). Further splitting optional. |
+| WC-007 | Medium | **Fixed** | `internal/app/model.go` | Found in this sweep: a new chat's first message was marked read on first sight; read marks now start at the latest synced message unless it just arrived. |
+| WC-008 | Low | **Fixed** | `internal/ui/canvas.go` | Found in this sweep: `TailFit` was quadratic for 4096-character drafts; now a single backwards scan. |
+| WC-009 | Low | **Fixed** | `internal/app/mouse.go` | Found in this sweep: repeated mouse-motion reports within one cell re-ran hit testing. |
 
 ## Existing safeguards worth preserving
 - Explicit user consent before WhatsApp connection.

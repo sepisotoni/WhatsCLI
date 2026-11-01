@@ -23,7 +23,10 @@ WhatsCLI is a single Go terminal process with a real, implemented unofficial Wha
 | `internal/messaging/attachments*.go` | Host-local regular-file inspection, bounded reads, document upload/send |
 | `internal/history/{history,sqlite,migrations,legacy}.go` | Account-aware history contract, transactional ingestion, scoped pagination, schema migration, original local API compatibility |
 | `internal/privatefs/privatefs.go` | Private state directory/file preparation and symlink/nonregular/hardlink rejection |
-| `internal/ui/{styles,text,qr}.go` | Styles, terminal-text sanitization, size-aware untruncated QR rendering |
+| `internal/ui/{canvas,theme,avatar,doodle,qr,text}.go` | Cell canvas with explicit fg/bg per cell (truecolor/256), palette, circular avatars (photo or initials), wallpaper, half-block QR, terminal-text sanitization |
+| `internal/app/{view,workspace,overlays,explorer,mouse,keys,slash}.go` | Screen renderers that also register hit regions, file browser and upload queue, mouse routing, keyboard and slash commands |
+| `internal/webpair` | Loopback-only web page for QR pairing when the terminal cannot show it |
+| `internal/messaging/{avatar,bundle}.go` | Allow-listed profile-picture download; folder inspection and zip archiving |
 
 ## Startup, consent, and session lifecycle
 

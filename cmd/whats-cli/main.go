@@ -17,6 +17,7 @@ import (
 	"whatscli/internal/history"
 	"whatscli/internal/messaging"
 	"whatscli/internal/privatefs"
+	"whatscli/internal/ui"
 )
 
 func main() {
@@ -36,11 +37,17 @@ func run() error {
 	offline := flag.Bool("offline", false, "disable all WhatsApp network operations")
 	demo := flag.Bool("demo", false, "explore synthetic conversations using disposable state; never connects to WhatsApp")
 	version := flag.Bool("version", false, "show application version")
+	colors := flag.String("colors", "auto", "colour depth: auto, truecolor or 256")
 	flag.Parse()
 	if *version {
-		fmt.Println("WhatsCLI 0.2.0")
+		fmt.Println("WhatsCLI 0.3.0")
 		return nil
 	}
+	profile, ok := ui.ParseProfile(*colors, os.Getenv)
+	if !ok {
+		return errors.New("-colors must be auto, truecolor or 256")
+	}
+	ui.SetProfile(profile)
 	if *demo {
 		if *dbPath != "" {
 			return errors.New("-demo cannot be combined with -db")
@@ -89,7 +96,7 @@ func run() error {
 	}
 	runtime := app.NewRuntime(repo, client, settings.Accepted())
 	defer runtime.Close()
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer cancel()
 	options := []tea.ProgramOption{tea.WithAltScreen(), tea.WithContext(ctx)}
 	if settings.Mouse {
@@ -98,9 +105,14 @@ func run() error {
 	model := app.NewWithRuntime(runtime, settings, settingsPath)
 	if *demo {
 		model = app.DemoModel(runtime, settings, settingsPath)
+	} else {
+		model = model.WithState(filepath.Join(*stateDir, "ui-state.json"), *stateDir)
 	}
 	program := tea.NewProgram(model, options...)
-	_, err = program.Run()
+	final, err := program.Run()
+	if fm, ok := final.(app.Model); ok {
+		fm.FlushState()
+	}
 	if errors.Is(err, tea.ErrProgramKilled) && ctx.Err() != nil {
 		return nil
 	}

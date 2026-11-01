@@ -2,12 +2,19 @@ package messaging
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -44,6 +51,7 @@ type transport struct {
 	producers        sync.WaitGroup
 	opMu             sync.Mutex
 	client           *whatsmeow.Client
+	live             atomic.Pointer[whatsmeow.Client] // lock-free view for avatar lookups
 	store            *sqlstore.Container
 	handler          uint32
 	connectionCancel context.CancelFunc
@@ -109,6 +117,7 @@ func (t *transport) initialize(ctx context.Context) error {
 			return errors.New("could not close previous session store")
 		}
 		t.client, t.store = nil, nil
+		t.live.Store(nil)
 	}
 	container, err := openSession(ctx, t.path)
 	if err != nil {
@@ -123,6 +132,7 @@ func (t *transport) initialize(ctx context.Context) error {
 	client.EnableAutoReconnect = true
 	client.InitialAutoReconnect = false
 	t.client, t.store = client, container
+	t.live.Store(client)
 	t.setAccount(accountID(client))
 	t.handler = client.AddEventHandler(func(event any) {
 		if !t.begin() {
@@ -314,12 +324,24 @@ func (t *transport) Logout(ctx context.Context) error {
 	return nil
 }
 
+// NewMessageID mirrors the upstream web-ID scheme (hash of time, own user and
+// random bytes) without taking the operation lock, so it can never stall behind
+// a long Connect. It works before consent: no store or network is touched.
 func (t *transport) NewMessageID() string {
-	t.opMu.Lock()
-	defer t.opMu.Unlock()
-	// The client method supports a nil client before initialization. No session
-	// store or network connection is created merely to generate an outgoing ID.
-	return t.client.GenerateMessageID()
+	account, _ := t.sessionState()
+	data := make([]byte, 8, 8+len(account)+5+16)
+	binary.BigEndian.PutUint64(data, uint64(time.Now().Unix()))
+	if user, _, ok := strings.Cut(account, "@"); ok && user != "" {
+		data = append(data, user...)
+		data = append(data, "@c.us"...)
+	}
+	random := make([]byte, 16)
+	if _, err := rand.Read(random); err != nil {
+		panic("system random source unavailable")
+	}
+	data = append(data, random...)
+	sum := sha256.Sum256(data)
+	return whatsmeow.WebMessageIDPrefix + strings.ToUpper(hex.EncodeToString(sum[:9]))
 }
 
 func destination(chat string) (types.JID, error) {

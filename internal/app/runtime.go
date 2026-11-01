@@ -216,3 +216,25 @@ func (r *Runtime) Close() error {
 	})
 	return r.closeErr
 }
+
+// Avatar fetches a contact's profile picture bytes. It never blocks the UI:
+// callers invoke it from a command. nil bytes mean "no artwork" (use initials).
+func (r *Runtime) Avatar(ctx context.Context, chat string) ([]byte, error) {
+	provider, ok := r.Client.(messaging.AvatarProvider)
+	state := r.Snapshot()
+	r.mu.Lock()
+	allowed := r.consent && !r.closing
+	r.mu.Unlock()
+	if !ok || !allowed || !state.Online {
+		return nil, nil
+	}
+	return provider.ProfilePicture(ctx, chat)
+}
+
+// CanFetchAvatars reports whether the transport can supply profile pictures now.
+func (r *Runtime) CanFetchAvatars() bool {
+	if _, ok := r.Client.(messaging.AvatarProvider); !ok {
+		return false
+	}
+	return r.Snapshot().Online
+}

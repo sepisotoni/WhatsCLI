@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,7 +16,8 @@ import (
 	"whatscli/internal/history"
 )
 
-const MaxAttachmentSize int64 = 10 << 20
+// MaxAttachmentSize bounds plaintext plus the transport's encrypted copy in memory.
+const MaxAttachmentSize int64 = 64 << 20
 
 type Attachment struct {
 	Name string
@@ -42,7 +44,7 @@ func openAttachment(path string) (*os.File, Attachment, error) {
 		return nil, Attachment{}, errors.New("attachment must be a regular file, not a symlink or device")
 	}
 	if info.Size() > MaxAttachmentSize {
-		return nil, Attachment{}, errors.New("attachment exceeds the 10 MiB limit")
+		return nil, Attachment{}, errors.New("attachment exceeds the 64 MiB limit")
 	}
 	file, err := openRegularFile(path)
 	if err != nil {
@@ -97,7 +99,16 @@ func (t *transport) SendFile(ctx context.Context, chat, path, id string) (histor
 		URL: proto.String(upload.URL), DirectPath: proto.String(upload.DirectPath),
 		MediaKey: upload.MediaKey, FileEncSHA256: upload.FileEncSHA256,
 		FileSHA256: upload.FileSHA256, FileLength: proto.Uint64(upload.FileLength),
-		Mimetype: proto.String(http.DetectContentType(data)), FileName: proto.String(attachment.Name),
+		Mimetype: proto.String(contentType(attachment.Name, data)), FileName: proto.String(attachment.Name),
 	}}
 	return t.send(ctx, client, jid, message, "[document: "+attachment.Name+"]", id)
+}
+
+// contentType prefers the file extension (accurate for office files, archives
+// and source code) and falls back to sniffing the first bytes.
+func contentType(name string, data []byte) string {
+	if t := mime.TypeByExtension(filepath.Ext(name)); t != "" {
+		return t
+	}
+	return http.DetectContentType(data)
 }

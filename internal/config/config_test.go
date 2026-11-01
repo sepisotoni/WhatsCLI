@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestSettingsRoundTrip(t *testing.T) {
@@ -46,5 +47,40 @@ func TestSettingsRejectSymlinkAndTrailingJSON(t *testing.T) {
 	}
 	if _, err := Load(target); err == nil {
 		t.Fatal("accepted trailing data")
+	}
+}
+
+func TestOldSettingsKeepNewDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(`{"consent_version":1,"mouse":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load(path)
+	if err != nil || !s.Accepted() || !s.Photos() || !s.Wallpaper() || s.ReducedMotion || s.Bell {
+		t.Fatalf("unexpected defaults: %+v %v", s, err)
+	}
+}
+
+func TestUIStateRoundTripAndRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ui-state.json")
+	state := UIState{Read: map[string]time.Time{"a|b": time.Unix(100, 0).UTC()}, Archived: map[string]bool{"a|c": true}}
+	if err := SaveState(path, state); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadState(path)
+	if err != nil || !got.Read["a|b"].Equal(state.Read["a|b"]) || !got.Archived["a|c"] {
+		t.Fatalf("round trip failed: %+v %v", got, err)
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+		t.Fatal("state must be private")
+	}
+	if missing, err := LoadState(filepath.Join(dir, "none.json")); err != nil || len(missing.Read) != 0 {
+		t.Fatal("missing state should be empty")
+	}
+	link := filepath.Join(dir, "link.json")
+	os.Symlink(path, link)
+	if _, err := LoadState(link); err == nil {
+		t.Fatal("followed a symlink")
 	}
 }

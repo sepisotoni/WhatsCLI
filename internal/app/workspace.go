@@ -5,482 +5,880 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
-
 	"whatscli/internal/history"
 	"whatscli/internal/messaging"
 	"whatscli/internal/ui"
 )
 
-// All hit testing uses these same cell dimensions as the renderer.
-func (m Model) geometry() (rail, sidebar, main, height int) {
-	rail, sidebar, height = 7, min(38, max(28, m.width/4)), m.height-2
-	return rail, sidebar, m.width - rail - sidebar, height
+type geo struct{ rail, list, main, foot ui.Rect }
+
+func (m Model) chatPaneActive() bool {
+	if m.active == chatScreen || m.composing {
+		return true
+	}
+	if n := len(m.trail); n > 0 {
+		return m.trail[n-1] == chatScreen
+	}
+	return m.isOverlay() && m.chatID != "" && m.active != settingsScreen && m.active != helpScreen && m.active != commandScreen && m.active != newChatScreen
 }
 
-func fit(text string, width, height int) string {
-	lines := strings.Split(text, "\n")
-	if len(lines) > height {
-		lines = lines[:height]
-	}
-	for i, line := range lines {
-		lines[i] = ansi.Truncate(line, max(1, width), "…")
-	}
-	for len(lines) < height {
-		lines = append(lines, "")
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (m Model) workspaceView() string {
-	rail, sidebar, main, height := m.geometry()
-	left := []string{"", ui.Brand(" >_"), "", ui.Button(" C ", m.active == inboxScreen), "", ui.Button(" + ", m.hover == "new"), "", ui.Button(" AI", m.hover == "ai")}
-	for len(left) < height-5 {
-		left = append(left, "")
-	}
-	left = append(left, ui.Button(" S ", m.hover == "settings"))
-	nav := ui.Frame(fit(strings.Join(left, "\n"), rail-2, height-2), rail, height, false)
-	list := ui.Frame(m.sidebarView(sidebar-2, height-2), sidebar, height, m.active == inboxScreen)
-	conversation := ui.Frame(m.conversationView(main-2, height-2), main, height, m.active == chatScreen)
-	footer := " Tab · panes   ↑↓ · navigate   Enter · open   n · new chat   Ctrl+F · search   / · commands"
-	if m.active == chatScreen {
-		footer = " i · compose   a · attach   Enter · versions   p · older   r · latest   Tab · chats   / · commands"
-	}
-	if m.composing {
-		footer = " Enter · send   Ctrl+J · newline   Ctrl+U · clear   Esc · stop typing   Ctrl+C · quit"
-	}
-	if m.searching {
-		footer = " Type · filter loaded chats   ↑↓ · select   Enter · open   Esc · clear search"
-	}
-	status := m.connection.Status
-	if status == "" {
-		status = "Offline · local history"
-	}
-	if m.demo {
-		status = "DEMO · synthetic messages · no WhatsApp connection"
-	}
-	if m.notice != "" {
-		status = m.notice
-	}
-	if m.connection.Error != "" {
-		status = m.connection.Error
-	}
-	if m.sending && !m.settings.ReducedMotion {
-		status = []string{"◐", "◓", "◑", "◒"}[m.frame] + " " + status
-	}
-	if m.demo && !strings.HasPrefix(status, "DEMO") {
-		status = "DEMO · " + status
-	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, nav, list, conversation) + "\n" +
-		ui.Muted(ansi.Truncate(footer, m.width, "…")) + "\n" +
-		ui.Brand(" >_ WhatsCLI  ") + ui.Muted(ansi.Truncate(ui.SingleLine(status), max(1, m.width-14), "…"))
-}
-
-func (m Model) welcomeView() string {
-	width := min(76, m.width-6)
-	body := "\n" + ui.Brand("╭──────╮\n│  >_  │\n╰──┬───╯") + "\n\n" +
-		ui.Label("Welcome to ") + ui.Brand("WhatsCLI") + "\n\n" +
-		ui.Muted("Your conversations. Your terminal.") + "\n\n" +
-		ui.Muted(strings.Repeat("─", min(40, width-8))) + "\n\n" +
-		ui.Button(" Get started → ", true) + "   " + ui.Button(" q · Exit ", false) +
-		"\n\n" + ui.Muted("Enter to continue · / commands") + "\n"
-	panel := ui.Frame(lipgloss.PlaceHorizontal(width-2, lipgloss.Center, body), width, min(23, m.height-2), true)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, panel)
-}
-
-func (m Model) visibleChats() []int {
-	var indices []int
-	for i, c := range m.conversations {
-		if strings.Contains(strings.ToLower(c.Title+" "+c.ID), strings.ToLower(m.search)) {
-			indices = append(indices, i)
+func (m Model) geo() geo {
+	W, H := m.width, m.height
+	ph := H - 1
+	g := geo{foot: ui.R(0, H-1, W, 1)}
+	switch {
+	case W >= 100:
+		lw := min(44, max(32, W*30/100))
+		g.rail = ui.R(0, 0, 11, ph)
+		g.list = ui.R(12, 0, lw, ph)
+		g.main = ui.R(12+lw+1, 0, W-12-lw-1, ph)
+	case W >= 72:
+		g.list = ui.R(0, 0, 30, ph)
+		g.main = ui.R(31, 0, W-31, ph)
+	default:
+		if m.chatPaneActive() && m.chatID != "" {
+			g.main = ui.R(0, 0, W, ph)
+		} else {
+			g.list = ui.R(0, 0, W, ph)
 		}
 	}
-	return indices
+	return g
 }
 
-func (m Model) chatWindow(height int) ([]int, int) {
-	indices := m.visibleChats()
-	selected := 0
-	for i, index := range indices {
-		if index == m.chatIndex {
-			selected = i
+const (
+	itemPitch = 4
+	listHead  = 7
+)
+
+// listCapacity is the number of chat rows that fit in the list viewport.
+func (m Model) listCapacity() int {
+	h := m.geo().list.H
+	if h == 0 {
+		h = m.height - 1
+	}
+	return max(1, (h-listHead-5)/itemPitch)
+}
+
+func (s *scene) workspace() {
+	m := s.m
+	g := m.geo()
+	if g.rail.W > 0 {
+		s.rail(g.rail)
+	}
+	if g.list.W > 0 {
+		s.list(g.list)
+	}
+	if g.main.W > 0 {
+		s.mainPane(g.main, g.list.W == 0)
+	}
+	s.footer(g.foot)
+}
+
+// ---- navigation rail ----
+
+func (s *scene) railButton(r ui.Rect, glyph, id string, active bool) {
+	c := s.c
+	border, fill, fg := ui.Border, ui.Panel, ui.Text
+	if active {
+		border, fill, fg = ui.BorderHi, ui.PanelHi, ui.Accent
+	}
+	if s.is(id) {
+		border, fill = ui.Accent, ui.PanelHi
+	}
+	c.Box(r, border, fill)
+	if id == "rail:new" {
+		c.Put(r.X+1, r.Y+1, '◖', ui.Accent, fill, false)
+		c.Text(r.X+2, r.Y+1, " + ", ui.AccentDark, ui.Accent, true)
+		c.Put(r.X+5, r.Y+1, '◗', ui.Accent, fill, false)
+	} else {
+		s.center(r, glyph, fg, fill, true)
+	}
+	s.add(r, id)
+}
+
+func (s *scene) rail(r ui.Rect) {
+	m, c := s.m, s.c
+	c.Box(r, ui.Border, ui.Panel)
+	bx := r.X + 1
+	y := r.Y + 3
+	total := 0
+	for _, n := range m.unread {
+		total += n
+	}
+	buttons := []struct {
+		glyph, id string
+		active    bool
+	}{
+		{"✉", "rail:chats", m.listMode == modeAll || m.listMode == modeArchive},
+		{"+", "rail:new", false},
+		{"☻", "rail:contacts", m.listMode == modeContacts},
+		{"◔", "rail:unread", m.listMode == modeUnread},
+		{"⤓", "rail:files", m.active == explorerScreen},
+	}
+	for _, b := range buttons {
+		if y+3 > r.Bottom()-5 {
+			break
+		}
+		btn := ui.R(bx+1, y, 7, 3)
+		s.railButton(btn, b.glyph, b.id, b.active)
+		if b.id == "rail:chats" && total > 0 {
+			label := fmt.Sprint(total)
+			if total > 99 {
+				label = "99+"
+			}
+			bw := ui.StringWidth(label) + 2
+			c.Fill(ui.R(btn.Right()-bw, y-1, bw, 1), ui.Accent)
+			c.Text(btn.Right()-bw+1, y-1, label, ui.AccentDark, ui.Accent, true)
+		}
+		y += 4
+	}
+	s.railButton(ui.R(bx+1, r.Bottom()-4, 7, 3), "⚙", "rail:settings", m.active == settingsScreen)
+}
+
+// ---- chat list ----
+
+func (m Model) listTitle() string {
+	switch m.listMode {
+	case modeContacts:
+		return "Contacts"
+	case modeUnread:
+		return "Unread"
+	case modeArchive:
+		return "Archive"
+	}
+	return "Chats"
+}
+
+func (m Model) clock(t time.Time) string {
+	t = t.Local()
+	if m.settings.Clock12h {
+		return t.Format("3:04 PM")
+	}
+	return t.Format("15:04")
+}
+
+func (m Model) stamp(t time.Time) string {
+	now := time.Now()
+	if !m.now.IsZero() {
+		now = m.now
+	}
+	t = t.Local()
+	switch days := int(now.Local().Sub(t).Hours() / 24); {
+	case t.Format("2006-01-02") == now.Local().Format("2006-01-02") || (t.After(now) && days <= 0):
+		return m.clock(t)
+	case days <= 1:
+		return "Yesterday"
+	case days < 7:
+		return t.Format("Mon")
+	}
+	return t.Format("02/01/06")
+}
+
+func (m Model) senderLabel(jid string) string {
+	for _, c := range m.conversations {
+		if c.ID == jid && c.Title != "" {
+			return ui.SingleLine(c.Title)
 		}
 	}
-	count := max(1, (height-6)/3)
-	start := max(0, selected-count+1)
-	return indices[start:min(len(indices), start+count)], start
+	if messaging.IsMetaAI(jid) {
+		return "Meta AI"
+	}
+	name, _, _ := strings.Cut(jid, "@")
+	return ui.SingleLine(name)
 }
 
-func (m Model) sidebarView(width, height int) string {
-	title := " " + ui.Label("Chats") + " " + ui.Brand(fmt.Sprint(len(m.conversations)))
-	query := " Search chats…"
+// previewParts splits a chat-list preview into a coloured prefix and text.
+func (m Model) previewParts(c history.Conversation) (prefix string, pfg ui.Color, text string) {
+	text = ui.SingleLine(c.LastBody)
+	group := strings.HasSuffix(c.ID, "@g.us")
+	switch {
+	case strings.HasPrefix(text, "[document: "):
+		text = "▤ " + strings.TrimSuffix(strings.TrimPrefix(text, "[document: "), "]")
+	case strings.HasPrefix(text, "[image"):
+		rest := strings.TrimSpace(text[strings.Index(text, "]")+1:])
+		text = "▣ " + map[bool]string{true: rest, false: "Image"}[rest != ""]
+	case strings.HasPrefix(text, "[video"):
+		text = "▶ Video"
+	case strings.HasPrefix(text, "[audio"):
+		text = "♪ Voice message"
+	case strings.HasPrefix(text, "[sticker"):
+		text = "Sticker"
+	}
+	if c.LastBody == "" {
+		return "", ui.Dim, "No messages yet"
+	}
+	if c.LastFromMe {
+		switch c.LastStatus {
+		case "read":
+			prefix, pfg = "✓✓ ", ui.Accent
+		case "delivered":
+			prefix, pfg = "✓✓ ", ui.Dim
+		case "pending":
+			prefix, pfg = "… ", ui.Dim
+		case "unknown", "failed":
+			prefix, pfg = "! ", ui.Danger
+		default:
+			prefix, pfg = "✓ ", ui.Dim
+		}
+		if group {
+			text = "You: " + text
+		}
+		return
+	}
+	if group && c.LastSender != "" {
+		text = m.senderLabel(c.LastSender) + ": " + text
+	}
+	return "", ui.Dim, text
+}
+
+func (s *scene) list(r ui.Rect) {
+	m, c := s.m, s.c
+	focus := (m.active == inboxScreen || (m.active != chatScreen && !m.composing)) && !s.off
+	border := ui.Border
+	if focus {
+		border = ui.Mix(ui.Accent, ui.Panel, .35)
+	}
+	c.Box(r, border, ui.Panel)
+	title := m.listTitle()
+	c.Text(r.X+3, r.Y+1, title, ui.Text, ui.Panel, true)
+	count := len(m.visibleChats())
+	if m.listMode == modeAll {
+		count = 0
+		for _, conv := range m.conversations {
+			if !m.isArchived(conv.ID) {
+				count++
+			}
+		}
+	}
+	s.pill(r.X+3+ui.StringWidth(title)+1, r.Y+1, fmt.Sprint(count), ui.Accent, ui.PanelHi)
+	sr := ui.R(r.X+2, r.Y+3, r.W-4, 3)
+	sb := ui.Border
+	if m.searching || s.is("search") {
+		sb = ui.Accent
+	}
+	c.Box(sr, sb, ui.Panel)
+	c.Text(sr.X+2, sr.Y+1, "⌕", ui.Dim, ui.Panel, false)
+	query := "Search chats…"
+	qfg := ui.Dim
 	if m.search != "" || m.searching {
-		query = " / " + ui.SingleLine(m.search)
+		query, qfg = ui.TailFit(ui.SingleLine(m.search), sr.W-8), ui.Text
 		if m.searching {
 			query += "▏"
 		}
 	}
-	lines := []string{"", title, "", ui.Muted(ansi.Truncate(query, width, "…")), ui.Muted(strings.Repeat("─", width)), ""}
-	indices, _ := m.chatWindow(height)
-	for _, i := range indices {
-		c := m.conversations[i]
-		name := ui.SingleLine(c.Title)
-		if name == "" {
-			name = c.ID
-		}
-		prefix := "  "
-		if strings.HasSuffix(c.ID, "@g.us") {
-			prefix = "◎ "
-		}
-		if i == m.chatIndex {
-			prefix = "› "
-		}
-		stamp := c.UpdatedAt.Local().Format("15:04")
-		row := prefix + ansi.Truncate(name, max(1, width-10), "…")
-		row += strings.Repeat(" ", max(1, width-ansi.StringWidth(row)-len(stamp)-1)) + stamp
-		preview := c.LastBody
-		if preview == "" {
-			preview = "No messages yet"
-		}
-		row2 := "  " + ansi.Truncate(ui.SingleLine(preview), width-3, "…")
-		style := lipgloss.NewStyle().Width(width).Foreground(ui.Text)
-		if i == m.chatIndex || m.hover == fmt.Sprintf("chat:%d", i) {
-			style = style.Background(ui.Outgoing).Foreground(ui.Green)
-		}
-		lines = append(lines, style.Bold(i == m.chatIndex).Render(row), style.Render(row2), "")
+	c.Text(sr.X+4, sr.Y+1, ui.Truncate(query, sr.W-6, "…"), qfg, ui.Panel, false)
+	s.add(sr, "search")
+
+	indices := m.visibleChats()
+	vis := m.listCapacity()
+	top := min(m.listTop, max(0, len(indices)-vis))
+	y0 := r.Y + listHead
+	for slot := 0; slot < vis && top+slot < len(indices); slot++ {
+		idx := indices[top+slot]
+		y := y0 + slot*itemPitch
+		s.chatRow(ui.R(r.X+1, y, r.W-2, 3), idx, idx == m.chatIndex)
 	}
 	if len(indices) == 0 {
-		lines = append(lines, ui.Muted(" No matching chats."), "", ui.Muted(" n · start a conversation"))
+		msg := "No chats here yet."
+		hint := "n · start a conversation"
+		if m.listMode == modeUnread {
+			msg, hint = "Nothing unread.", "You are all caught up."
+		}
+		if m.search != "" {
+			msg, hint = "No matching chats.", "Esc clears the search."
+		}
+		c.Text(r.X+4, y0+1, msg, ui.Dim, ui.Panel, false)
+		c.Text(r.X+4, y0+3, hint, ui.Faint, ui.Panel, false)
 	}
-	return fit(strings.Join(lines, "\n"), width, height)
+	// Archive row (or back-to-chats while viewing the archive).
+	ay := r.Bottom() - 5
+	c.HLine(r.X+2, ay-1, r.W-4, '─', ui.Mix(ui.Border, ui.Panel, .5))
+	rect := ui.R(r.X+1, ay, r.W-2, 4)
+	if s.is("archive") {
+		c.Fill(ui.R(rect.X, ay, rect.W, 3), ui.PanelHi)
+	}
+	bg := ui.Panel
+	if s.is("archive") {
+		bg = ui.PanelHi
+	}
+	icon := ui.R(r.X+3, ay, 6, 3)
+	c.Fill(icon, bg)
+	ui.DrawAvatar(c, icon.X, icon.Y, "▣", nil, bg)
+	label := "Archive"
+	glyph := "›"
+	if m.listMode == modeArchive {
+		label, glyph = "Back to chats", "‹"
+	}
+	c.Text(r.X+11, ay+1, label, ui.Text, bg, true)
+	c.Text(r.Right()-4, ay+1, glyph, ui.Text, bg, true)
+	s.add(rect, "archive")
 }
 
-func (m Model) conversationView(width, height int) string {
-	if m.chatID == "" {
-		body := ui.Brand(">_") + "\n\n" + ui.Label("Your conversations.\nYour terminal.") +
-			"\n\n" + ui.Muted("Select a chat to get started.\n\nn · new conversation\n/ · command palette\n\nIndependent. Keyboard-first. Local.")
-		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, body)
-	}
-	title := ui.Label(" " + ui.SingleLine(m.chatTitle))
-	context := " direct conversation"
-	if strings.HasSuffix(m.chatID, "@g.us") {
-		context = " group conversation"
-	}
-	if strings.HasSuffix(m.chatID, "@bot") || m.chatTitle == "Meta AI" {
-		context = " Meta AI · availability depends on your account"
-	}
-	header := title + "\n" + ui.Muted(ansi.Truncate(context, width, "…")) + "\n" + ui.Muted(strings.Repeat("─", width))
-	bodyHeight := max(1, height-8)
-	transcript := m.transcript(width, bodyHeight)
-	draft := "Type a message…"
-	if m.composer != "" {
-		runes := []rune(ui.SingleLine(m.composer))
-		// Keep the caret and most recent input visible, not the start of a long draft.
-		for ansi.StringWidth(string(runes)) > max(1, width-15) && len(runes) > 0 {
-			runes = runes[1:]
-		}
-		draft = string(runes)
-	}
-	if m.composing {
-		draft += "▏"
-	}
-	prompt := ui.Muted(draft)
-	if m.composing {
-		prompt = ui.Label(draft)
-	}
-	sendLabel := " › "
-	if m.sending {
-		sendLabel = " … "
-	}
-	composer := ui.Muted(strings.Repeat("─", width)) + "\n\n" +
-		ui.Button("+", m.hover == "attach") + " " + lipgloss.NewStyle().Width(max(1, width-10)).Render(ansi.Truncate(prompt, max(1, width-10), "…")) +
-		" " + ui.Button(sendLabel, m.composing || m.hover == "send") + "\n"
-	return fit(header+"\n"+transcript+"\n"+composer, width, height)
-}
-
-func (m Model) transcript(width, height int) string {
-	if len(m.messages) == 0 {
-		return fit("\n "+ui.Muted("No messages on this page.\n Press i to write the first message."), width, height)
-	}
-	date := m.messages[min(m.messageIndex, len(m.messages)-1)].CreatedAt.Local()
-	label := date.Format("02 Jan 2006")
-	if date.Format("2006-01-02") == time.Now().Format("2006-01-02") {
-		label = "Today"
-	}
-	dateRow := lipgloss.PlaceHorizontal(width, lipgloss.Center, ui.Button(label, false))
-	height = max(1, height-2)
-	// Pages arrive newest-first. Include the selected message and fit as many
-	// older messages as possible, then display them in chronological order.
-	var bubbles []string
-	used := 0
-	start := max(0, min(m.messageIndex, len(m.messages)-1))
-	for i := start; i < len(m.messages); i++ {
-		bubble := m.bubble(m.messages[i], width, i == m.messageIndex, height)
-		h := lipgloss.Height(bubble) + 1
-		if used+h > height && len(bubbles) > 0 {
-			break
-		}
-		bubbles = append([]string{bubble}, bubbles...)
-		used += h
-		if used >= height {
-			break
-		}
-	}
-	body := strings.Join(bubbles, "\n\n")
-	lines := strings.Split(body, "\n")
-	if len(lines) > height {
-		body = strings.Join(lines[len(lines)-height:], "\n")
-	}
-	return dateRow + "\n\n" + fit(body, width, height)
-}
-
-func (m Model) bubble(message history.Message, width int, selected bool, maxHeight int) string {
-	bubbleWidth := max(10, min(width-4, width*4/5))
-	color, bg := ui.Line, ui.Incoming
-	if message.FromMe {
-		bg = ui.Outgoing
-	}
-	if selected && m.active == chatScreen && !m.composing {
-		color = ui.Green
-	}
-	body := ui.SafeText(message.Body)
-	if message.Deleted {
-		body = "[deleted · retained locally]\n" + body
-	}
-	naturalWidth := 22
-	for _, line := range strings.Split(body, "\n") {
-		naturalWidth = max(naturalWidth, ansi.StringWidth(line)+4)
-	}
-	bubbleWidth = min(bubbleWidth, naturalWidth)
-	sender := ui.SingleLine(message.Sender)
-	if message.FromMe {
-		sender = "You"
-	} else if messaging.IsMetaAI(message.Sender) {
-		sender = "Meta AI"
-	} else {
-		for _, chat := range m.conversations {
-			if chat.ID == message.Sender && chat.Title != "" {
-				sender = ui.SingleLine(chat.Title)
-				break
-			}
-		}
-		sender = strings.Split(sender, "@")[0]
-	}
-	wrapped := strings.Split(ansi.Hardwrap(body, bubbleWidth-4, true), "\n")
-	if len(wrapped) > max(1, maxHeight-5) {
-		wrapped = wrapped[:max(1, maxHeight-5)]
-		wrapped[len(wrapped)-1] = ansi.Truncate(wrapped[len(wrapped)-1], bubbleWidth-5, "") + "…"
-	}
-	stamp := message.CreatedAt.Local().Format("15:04")
-	if message.Edited {
-		stamp += " · edited"
-	}
-	if message.FromMe {
-		switch message.Status {
-		case "read":
-			stamp += " · ✓✓ read"
-		case "delivered":
-			stamp += " · ✓✓"
-		case "sent":
-			stamp += " · ✓"
-		case "pending":
-			stamp += " · pending"
-		default:
-			stamp += " · " + message.Status
-		}
-	}
-	content := ui.Brand(ansi.Truncate(sender, bubbleWidth-4, "…")) + "\n" + strings.Join(wrapped, "\n") + "\n" + ui.Muted(stamp)
-	bubble := lipgloss.NewStyle().Foreground(ui.Text).Background(bg).Border(lipgloss.RoundedBorder()).
-		BorderForeground(color).Padding(0, 1).Width(bubbleWidth - 2).Render(content)
-	if message.FromMe {
-		return lipgloss.PlaceHorizontal(width, lipgloss.Right, bubble)
-	}
-	return lipgloss.NewStyle().PaddingLeft(1).Render(bubble)
-}
-
-func (m *Model) moveChat(delta int) {
-	indices := m.visibleChats()
-	if len(indices) == 0 {
-		return
-	}
-	pos := 0
-	for i, index := range indices {
-		if index == m.chatIndex {
-			pos = i
-		}
-	}
-	m.chatIndex = indices[min(len(indices)-1, max(0, pos+delta))]
-}
-
-func (m *Model) openChat() tea.Cmd {
-	indices := m.visibleChats()
-	if len(indices) == 0 || m.chatIndex >= len(m.conversations) {
-		return nil
-	}
-	c := m.conversations[m.chatIndex]
-	if c.ID != m.chatID && (m.sending || m.composer != "") {
-		m.notice = "Finish the send or clear the current draft (Ctrl+U in composer) before changing chats."
-		return nil
-	}
-	m.searching = false
-	m.active = chatScreen
-	if m.chatID == c.ID {
-		return nil
-	}
-	m.chatID, m.chatTitle, m.messages = c.ID, c.Title, nil
-	m.messageBefore, m.messageIndex = nil, 0
-	return m.loadMessages(nil)
-}
-
-func (m *Model) searchKey(key tea.KeyMsg) tea.Cmd {
-	switch key.String() {
-	case "esc":
-		m.searching, m.search = false, ""
-	case "enter":
-		return m.openChat()
-	case "up":
-		m.moveChat(-1)
-	case "down":
-		m.moveChat(1)
-	case "backspace":
-		m.search = dropRune(m.search)
+func (s *scene) chatRow(r ui.Rect, idx int, selected bool) {
+	m, c := s.m, s.c
+	conv := m.conversations[idx]
+	id := fmt.Sprintf("chat:%d", idx)
+	hover := s.is(id)
+	bg := ui.Panel
+	switch {
+	case selected:
+		bg = ui.PanelHi
+		c.Box(ui.R(r.X, r.Y-1, r.W, 5), ui.BorderHi, ui.PanelHi)
+	case hover:
+		bg = ui.PanelHi
+		c.Fill(ui.R(r.X, r.Y, r.W, 3), bg)
 	default:
-		if (key.Type == tea.KeyRunes || key.Type == tea.KeySpace) && len([]rune(m.search)) < 80 {
-			m.search += ui.SingleLine(string(key.Runes))
-		}
+		c.HLine(r.X+9, r.Y+3, r.W-10, '─', ui.Mix(ui.Border, ui.Panel, .55))
 	}
-	if indices := m.visibleChats(); len(indices) > 0 {
-		found := false
-		for _, index := range indices {
-			found = found || index == m.chatIndex
-		}
-		if !found {
-			m.chatIndex = indices[0]
-		}
+	name := ui.SingleLine(conv.Title)
+	if name == "" {
+		name = conv.ID
 	}
-	return nil
+	ui.DrawAvatar(c, r.X+2, r.Y, name, m.photoFor(conv.ID), bg)
+	tx := r.X + 9
+	tw := r.W - 11
+	stamp := m.stamp(conv.UpdatedAt)
+	unread := m.unread[conv.ID]
+	stampFG := ui.Dim
+	if unread > 0 {
+		stampFG = ui.Accent
+	}
+	sw := ui.StringWidth(stamp)
+	c.Text(r.Right()-2-sw, r.Y, stamp, stampFG, bg, false)
+	nameFG := ui.Text
+	c.Text(tx, r.Y, ui.Truncate(name, max(1, tw-sw-1), "…"), nameFG, bg, true)
+	badgeW := 0
+	if unread > 0 {
+		label := fmt.Sprint(unread)
+		if unread > 99 {
+			label = "99+"
+		}
+		badgeW = ui.StringWidth(label) + 2
+		c.Fill(ui.R(r.Right()-2-badgeW, r.Y+1, badgeW, 1), ui.Accent)
+		c.Text(r.Right()-1-badgeW, r.Y+1, label, ui.AccentDark, ui.Accent, true)
+	}
+	prefix, pfg, text := m.previewParts(conv)
+	avail := tw - badgeW - 1
+	px := tx
+	if prefix != "" {
+		px += c.Text(px, r.Y+1, prefix, pfg, bg, true)
+		avail -= ui.StringWidth(prefix)
+	}
+	c.Text(px, r.Y+1, ui.Truncate(text, max(1, avail), "…"), ui.Dim, bg, false)
+	s.add(ui.R(r.X, r.Y-1, r.W, 5), id)
 }
 
-func (m *Model) mouse(msg tea.MouseMsg) tea.Cmd {
-	if !m.settings.Mouse || m.active != inboxScreen && m.active != chatScreen || m.width < 90 || m.height < 20 {
-		return nil
-	}
-	rail, sidebar, _, height := m.geometry()
-	target := ""
-	if msg.X < rail {
-		switch {
-		case msg.Y == 4:
-			target = "chats"
-		case msg.Y == 6:
-			target = "new"
-		case msg.Y == 8:
-			target = "ai"
-		case msg.Y == height-4:
-			target = "settings"
-		}
-	} else if msg.X < rail+sidebar {
-		if msg.Y == 4 {
-			target = "search"
-		} else if msg.Y >= 7 {
-			indices, _ := m.chatWindow(height - 2)
-			row := (msg.Y - 7) / 3
-			if row >= 0 && row < len(indices) {
-				target = fmt.Sprintf("chat:%d", indices[row])
-			}
-		}
-	} else if msg.Y >= height-4 && m.chatID != "" {
-		target = "compose"
-		if msg.X < rail+sidebar+5 {
-			target = "attach"
-		}
-		if msg.X >= m.width-8 {
-			target = "send"
-		}
-	}
-	m.hover = target
-	if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
-		delta := 1
-		if msg.Button == tea.MouseButtonWheelUp {
-			delta = -1
-		}
-		if msg.X < rail+sidebar {
-			m.moveChat(delta)
-		} else if !m.composing {
-			m.messageIndex = min(max(0, len(m.messages)-1), max(0, m.messageIndex-delta))
-		}
-		return nil
-	}
-	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
-		return nil
+// ---- conversation pane ----
+
+func (m Model) subtitle() string {
+	if sub, ok := m.demoSubtitle[m.chatID]; ok {
+		return sub
 	}
 	switch {
-	case strings.HasPrefix(target, "chat:"):
-		var index int
-		fmt.Sscanf(target, "chat:%d", &index)
-		old := m.chatIndex
-		m.chatIndex = index
-		cmd := m.openChat()
-		if m.active != chatScreen || m.chatID != m.conversations[index].ID {
-			m.chatIndex = old
-		}
-		return cmd
-	case target == "chats":
-		m.active, m.composing = inboxScreen, false
-	case target == "search":
-		m.active, m.searching, m.composing = inboxScreen, true, false
-	case target == "settings":
-		m.composing = false
-		m.openOverlay(settingsScreen)
-	case target == "new":
-		m.composing = false
-		m.openOverlay(newChatScreen)
-		m.newChat = ""
-	case target == "ai":
-		return m.openMetaAI()
-	case target == "compose":
-		m.active, m.composing = chatScreen, !m.sending
-	case target == "attach":
-		if !m.sending {
-			m.active, m.composing, m.path = attachmentScreen, false, ""
-		}
-	case target == "send":
-		if !m.sending && strings.TrimSpace(m.composer) != "" {
-			return m.send(m.composer, "")
-		}
+	case messaging.IsMetaAI(m.chatID):
+		return "Meta AI · availability depends on your account"
+	case strings.HasSuffix(m.chatID, "@g.us"):
+		return "Group chat"
 	}
-	return nil
+	return "Direct chat"
 }
 
-type pulseMsg time.Time
-
-func pulse() tea.Cmd {
-	return tea.Tick(350*time.Millisecond, func(t time.Time) tea.Msg { return pulseMsg(t) })
+func (s *scene) mainPane(r ui.Rect, compact bool) {
+	m, c := s.m, s.c
+	if m.chatID == "" {
+		c.Box(r, ui.Border, ui.Panel)
+		if m.settings.Wallpaper() {
+			ui.Doodle(c, r.Inset(1), ui.Ink)
+		}
+		cx, cy := r.X+r.W/2, r.Y+r.H/2
+		box := ui.R(cx-6, cy-6, 13, 5)
+		c.Box(box, ui.Accent, ui.Panel)
+		c.Text(cx-1, cy-4, ">_", ui.Accent, ui.Panel, true)
+		c.Put(cx-4, cy-1, '╲', ui.Accent, ui.Panel, true)
+		lines := []struct {
+			t   string
+			fg  ui.Color
+			bld bool
+		}{{"Your conversations. Your terminal.", ui.Text, true}, {"Select a chat to get started.", ui.Dim, false}, {"", 0, false},
+			{"n new chat   /  commands   ?  help", ui.Faint, false}}
+		for i, l := range lines {
+			c.Text(cx-ui.StringWidth(l.t)/2, cy+1+i, l.t, l.fg, ui.Panel, l.bld)
+		}
+		return
+	}
+	ch := 5
+	if r.H < 24 {
+		ch = 3
+	}
+	head := ui.R(r.X, r.Y, r.W, 5)
+	comp := ui.R(r.X, r.Bottom()-ch, r.W, ch)
+	body := ui.R(r.X, r.Y+5, r.W, r.H-5-ch)
+	s.header(head, compact)
+	s.body(body)
+	s.composerBar(comp)
+	s.popups(comp)
 }
 
-func (m Model) pairingView() string {
-	leftWidth := min(44, m.width/3)
-	rightWidth := m.width - leftWidth - 6
-	instructions := ui.Brand("LINK A DEVICE") + "\n" + ui.Muted("Log in to WhatsApp") + "\n\n" +
-		ui.Brand("01") + "  Open WhatsApp on your phone.\n\n" +
-		ui.Brand("02") + "  Settings → Linked devices.\n\n" +
-		ui.Brand("03") + "  Choose Link a device.\n\n" +
-		ui.Brand("04") + "  Scan the QR and keep this\n    terminal open until linked.\n\n" +
-		ui.Muted("The code refreshes automatically.\nNever share or log it.")
-	qr := ui.Muted("Waiting for a pairing code…")
-	if m.connection.QR != "" {
-		qr = ui.QR(m.connection.QR, rightWidth, m.height-7)
-	} else if !m.settings.ReducedMotion {
-		qr = ui.Brand([]string{"◐", "◓", "◑", "◒"}[m.frame]) + " " + qr
+func (s *scene) header(r ui.Rect, compact bool) {
+	m, c := s.m, s.c
+	c.Box(r, ui.Border, ui.Panel)
+	x := r.X + 2
+	if compact {
+		br := ui.R(x, r.Y+1, 5, 3)
+		c.Box(br, ui.Border, ui.Panel)
+		s.center(br, "‹", ui.Accent, ui.Panel, true)
+		s.add(br, "head:back")
+		x += 6
 	}
-	bodyHeight := m.height - 6
-	body := lipgloss.JoinHorizontal(lipgloss.Top,
-		lipgloss.NewStyle().Width(leftWidth).Render(instructions),
-		lipgloss.Place(rightWidth, bodyHeight, lipgloss.Center, lipgloss.Center, qr))
-	footer := ui.Muted("f · fullscreen QR   r · retry   i · history   q · cancel and quit")
+	ui.DrawAvatar(c, x, r.Y+1, m.chatTitle, m.photoFor(m.chatID), ui.Panel)
+	btnW := 7
+	bx := r.Right() - 2 - 3*btnW - 2
+	for i, b := range []struct{ glyph, id string }{{"▶", "head:video"}, {"✆", "head:call"}, {"⋮", "head:more"}} {
+		br := ui.R(bx+i*(btnW+1), r.Y+1, btnW, 3)
+		border := ui.Border
+		if s.is(b.id) {
+			border = ui.Accent
+		}
+		c.Box(br, border, ui.Panel)
+		s.center(br, b.glyph, ui.Accent, ui.Panel, true)
+		s.add(br, b.id)
+	}
+	tw := bx - (x + 8) - 1
+	c.Text(x+8, r.Y+1, ui.Truncate(ui.SingleLine(m.chatTitle), tw, "…"), ui.Text, ui.Panel, true)
+	sub := m.subtitle()
+	status := ""
+	if m.demo {
+		status = "Online"
+	} else if m.connection.Online {
+		status = "Connected"
+	} else {
+		status = "Offline"
+	}
+	if sub != "" && tw > 0 {
+		c.Text(x+8, r.Y+2, ui.Truncate(sub, tw, "…"), ui.Dim, ui.Panel, false)
+		if w := ui.StringWidth(sub); w+3+ui.StringWidth(status) < tw {
+			c.Text(x+8+w, r.Y+2, " · ", ui.Dim, ui.Panel, false)
+			fg := ui.Accent
+			if status == "Offline" {
+				fg = ui.Faint
+			}
+			c.Text(x+11+w, r.Y+2, status, fg, ui.Panel, true)
+		}
+	}
+}
+
+// ---- transcript ----
+
+type bubble struct {
+	name         string
+	lines        []string
+	meta         string
+	tick         string
+	tickFG       ui.Color
+	inline       bool
+	w, h         int
+	own, deleted bool
+}
+
+type titem struct {
+	day   bool
+	label string
+	idx   int
+	h     int
+}
+
+func tickFor(status string) (string, ui.Color) {
+	switch status {
+	case "read":
+		return "✓✓", ui.Accent
+	case "delivered":
+		return "✓✓", ui.Dim
+	case "pending":
+		return "…", ui.Dim
+	case "unknown", "failed":
+		return "!", ui.Danger
+	}
+	return "✓", ui.Dim
+}
+
+func (m Model) buildBubble(msg history.Message, iw int) bubble {
+	b := bubble{own: msg.FromMe}
+	group := strings.HasSuffix(m.chatID, "@g.us")
+	if !msg.FromMe && group {
+		b.name = m.senderLabel(msg.Sender)
+	}
+	body := ui.SafeText(msg.Body)
+	if msg.Deleted {
+		body = "[deleted · retained locally]\n" + body
+	}
+	maxText := max(12, min(iw*58/100, 72))
+	b.lines = ui.Wrap(body, maxText)
+	b.meta = m.clock(msg.CreatedAt)
+	if msg.Edited {
+		b.meta = "edited " + b.meta
+	}
+	meta := b.meta
+	if msg.FromMe {
+		b.tick, b.tickFG = tickFor(msg.Status)
+		meta += " " + b.tick
+	}
+	mw := ui.StringWidth(meta)
+	content := ui.StringWidth(b.name)
+	for _, l := range b.lines {
+		content = max(content, ui.StringWidth(l))
+	}
+	last := ui.StringWidth(b.lines[len(b.lines)-1])
+	b.inline = last+2+mw <= max(maxText, content)
+	if b.inline {
+		content = max(content, last+2+mw)
+	} else {
+		content = max(content, mw)
+	}
+	b.w = content + 4
+	rows := len(b.lines)
+	if b.name != "" {
+		rows++
+	}
+	if !b.inline {
+		rows++
+	}
+	b.h = rows + 2
+	return b
+}
+
+func (m Model) dayLabel(t time.Time) string {
+	now := time.Now()
+	if !m.now.IsZero() {
+		now = m.now
+	}
+	if t.Local().Format("2006-01-02") == now.Local().Format("2006-01-02") {
+		return "Today"
+	}
+	if t.Local().Format("2006-01-02") == now.Local().AddDate(0, 0, -1).Format("2006-01-02") {
+		return "Yesterday"
+	}
+	return t.Local().Format("2 January 2006")
+}
+
+// titems lays the page out chronologically with a date pill per day.
+func (m Model) titems(iw int) []titem {
+	var items []titem
+	prevDay := ""
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		day := m.messages[i].CreatedAt.Local().Format("2006-01-02")
+		if day != prevDay {
+			items = append(items, titem{day: true, label: m.dayLabel(m.messages[i].CreatedAt), idx: i, h: 3})
+			prevDay = day
+		}
+		items = append(items, titem{idx: i, h: m.buildBubble(m.messages[i], iw).h})
+	}
+	return items
+}
+
+// window picks the items shown above bottom message `bottom`, keeping `sel` visible.
+func window(items []titem, area, bottom, sel int) (lo, hi int) {
+	pos := func(idx int) int {
+		for i, it := range items {
+			if !it.day && it.idx == idx {
+				return i
+			}
+		}
+		return len(items) - 1
+	}
+	hi = pos(bottom)
+	span := func(hi int) int {
+		used, lo := 0, hi+1
+		for i := hi; i >= 0; i-- {
+			h := items[i].h
+			if used > 0 {
+				h++
+			}
+			if used+h > area {
+				break
+			}
+			used += h
+			lo = i
+		}
+		return lo
+	}
+	sp := pos(sel)
+	if sp > hi {
+		hi = sp
+	}
+	lo = span(hi)
+	for sp < lo && hi > 0 {
+		hi--
+		for hi > 0 && items[hi].day {
+			hi--
+		}
+		lo = span(hi)
+	}
+	return
+}
+
+func (m Model) bodyInner() ui.Rect {
+	g := m.geo()
+	r := g.main
+	if r.W == 0 {
+		return ui.Rect{}
+	}
+	ch := 5
+	if r.H < 24 {
+		ch = 3
+	}
+	return ui.R(r.X, r.Y+5, r.W, r.H-5-ch).Inset(1)
+}
+
+// fitMessages keeps the selected message inside the transcript viewport.
+func (m *Model) fitMessages() {
+	inner := m.bodyInner()
+	if len(m.messages) == 0 || inner.W < 10 || inner.H < 3 {
+		return
+	}
+	items := m.titems(inner.W)
+	_, hi := window(items, inner.H, m.msgTop, m.messageIndex)
+	if hi >= 0 && hi < len(items) && !items[hi].day {
+		m.msgTop = items[hi].idx
+	}
+}
+
+func (s *scene) body(r ui.Rect) {
+	m, c := s.m, s.c
+	c.Box(r, ui.Border, ui.Panel)
+	inner := r.Inset(1)
+	s.add(inner, "body")
+	if m.settings.Wallpaper() {
+		ui.Doodle(c, inner, ui.Ink)
+	}
+	if len(m.messages) == 0 {
+		t1, t2 := "No messages yet", "Press i or click the box below to say hello."
+		c.Text(inner.X+(inner.W-ui.StringWidth(t1))/2, inner.Y+inner.H/2-1, t1, ui.Text, ui.Panel, true)
+		c.Text(inner.X+max(0, (inner.W-ui.StringWidth(t2))/2), inner.Y+inner.H/2+1, ui.Truncate(t2, inner.W, "…"), ui.Dim, ui.Panel, false)
+		return
+	}
+	restore := c.Clip(inner)
+	defer c.Restore(restore)
+	items := m.titems(inner.W)
+	lo, hi := window(items, inner.H, m.msgTop, m.messageIndex)
+	y := inner.Bottom()
+	for i := hi; i >= lo; i-- {
+		it := items[i]
+		y -= it.h
+		if it.day {
+			w := ui.StringWidth(it.label) + 6
+			pr := ui.R(inner.X+(inner.W-w)/2, y, w, 3)
+			c.Box(pr, ui.Border, ui.Hex(0x0A1F18))
+			s.center(pr, it.label, ui.Text, ui.Hex(0x0A1F18), false)
+		} else {
+			msg := m.messages[it.idx]
+			b := m.buildBubble(msg, inner.W)
+			sel := m.msgFocus && it.idx == m.messageIndex && m.active == chatScreen && !m.composing
+			s.drawBubble(inner, y, b, sel, s.is(fmt.Sprintf("msg:%d", it.idx)))
+			s.add(ui.R(inner.X, y, inner.W, it.h), fmt.Sprintf("msg:%d", it.idx))
+		}
+		y--
+	}
+	if lo > 0 {
+		c.Text(inner.Right()-3, inner.Y, "▲", ui.Accent, 0, true)
+	}
+}
+
+func (s *scene) drawBubble(inner ui.Rect, y int, b bubble, selected, hover bool) {
+	c := s.c
+	col := ui.BubbleIn
+	if b.own {
+		col = ui.BubbleOut
+	}
+	if selected {
+		col = ui.Mix(col, ui.Accent, .16)
+	} else if hover {
+		col = ui.Mix(col, ui.Accent, .07)
+	}
+	x := inner.X + 2
+	if b.own {
+		x = inner.Right() - 2 - b.w
+	}
+	c.Put(x, y, '▗', col, 0, false)
+	c.Put(x+b.w-1, y, '▖', col, 0, false)
+	c.Put(x, y+b.h-1, '▝', col, 0, false)
+	c.Put(x+b.w-1, y+b.h-1, '▘', col, 0, false)
+	for i := 1; i < b.w-1; i++ {
+		c.Put(x+i, y, '▄', col, 0, false)
+		c.Put(x+i, y+b.h-1, '▀', col, 0, false)
+	}
+	c.Fill(ui.R(x, y+1, b.w, b.h-2), col)
+	if selected {
+		for i := 1; i < b.h-1; i++ {
+			c.Put(x-1, y+i, '▌', ui.Accent, 0, false)
+		}
+	}
+	row := y + 1
+	if b.name != "" {
+		c.Text(x+2, row, b.name, ui.Accent, col, true)
+		row++
+	}
+	for i, line := range b.lines {
+		c.Text(x+2, row, line, ui.Text, col, false)
+		if i == len(b.lines)-1 && b.inline {
+			s.meta(x, row, b, col)
+		}
+		row++
+	}
+	if !b.inline {
+		s.meta(x, row, b, col)
+	}
+}
+
+func (s *scene) meta(x, row int, b bubble, col ui.Color) {
+	c := s.c
+	end := x + b.w - 2
+	if b.tick != "" {
+		end -= ui.StringWidth(b.tick)
+		c.Text(end, row, b.tick, b.tickFG, col, true)
+		end--
+	}
+	end -= ui.StringWidth(b.meta)
+	c.Text(end, row, b.meta, ui.Dim, col, false)
+}
+
+// ---- composer ----
+
+func (s *scene) composerBar(r ui.Rect) {
+	m, c := s.m, s.c
+	y := r.Y
+	if r.H >= 5 {
+		y++
+	}
+	r = ui.R(r.X+1, r.Y, r.W-2, r.H)
+	plus := ui.R(r.X, y, 7, 3)
+	border := ui.Border
+	if s.is("plus") {
+		border = ui.Accent
+	}
+	c.Box(plus, border, ui.Panel)
+	s.center(plus, "+", ui.Text, ui.Panel, true)
+	s.add(plus, "plus")
+	send := ui.R(r.Right()-8, y, 8, 3)
+	in := ui.R(plus.Right()+1, y, send.X-plus.Right()-2, 3)
+	ib := ui.Border
+	if m.composing || s.is("compose") {
+		ib = ui.Accent
+	}
+	c.Box(in, ib, ui.Panel)
+	s.add(in, "compose")
+	text, fg := "Type a message…", ui.Dim
+	if m.composer != "" || m.composing {
+		text, fg = strings.ReplaceAll(ui.SafeText(m.composer), "\n", "↵"), ui.Text
+	}
+	avail := in.W - 4 - 8
+	shown := ui.TailFit(text, avail)
+	if m.composer == "" && !m.composing {
+		shown = ui.Truncate(shown, avail, "…")
+	}
+	w := c.Text(in.X+2, y+1, shown, fg, ui.Panel, false)
+	if m.composing && (m.settings.ReducedMotion || m.frame%2 == 0) {
+		c.Fill(ui.R(in.X+2+w, y+1, 1, 1), ui.Accent)
+	}
+	emoji := ui.R(in.Right()-8, y+1, 3, 1)
+	attach := ui.R(in.Right()-4, y+1, 3, 1)
+	for _, ic := range []struct {
+		r     ui.Rect
+		glyph string
+		id    string
+	}{{emoji, "☺", "emoji"}, {attach, "↥", "attach"}} {
+		fgc := ui.Dim
+		if s.is(ic.id) {
+			fgc = ui.Accent
+		}
+		s.c.Text(ic.r.X+1, ic.r.Y, ic.glyph, fgc, ui.Panel, true)
+		s.add(ic.r, ic.id)
+	}
+	bg := ui.Accent
+	if s.is("send") {
+		bg = ui.AccentHi
+	}
+	if m.sending {
+		bg = ui.Mix(ui.Accent, ui.Panel, .5)
+	}
+	c.Fill(send, bg)
+	glyph := "➤"
+	if m.sending {
+		glyph = "…"
+		if !m.settings.ReducedMotion {
+			glyph = spinner[m.frame%len(spinner)]
+		}
+	}
+	s.center(send, glyph, ui.AccentDark, bg, true)
+	s.add(send, "send")
+}
+
+// popups draws the slash-command list and the emoji picker above the composer.
+func (s *scene) popups(comp ui.Rect) {
+	m, c := s.m, s.c
+	if sug := m.slashSuggestions(); len(sug) > 0 {
+		n := min(len(sug), 7)
+		w := min(comp.W-4, 64)
+		r := ui.R(comp.X+2, comp.Y-n-2, w, n+2)
+		if r.Y < 1 {
+			return
+		}
+		c.Box(r, ui.Accent, ui.Panel)
+		sel := min(m.slashIndex, len(sug)-1)
+		start := max(0, min(sel-n+1, len(sug)-n))
+		for i := 0; i < n; i++ {
+			cmd := sug[start+i]
+			bg := ui.Panel
+			id := "slash:" + cmd.name
+			if start+i == sel || s.is(id) {
+				bg = ui.PanelHi
+			}
+			c.Fill(ui.R(r.X+1, r.Y+1+i, w-2, 1), bg)
+			c.Text(r.X+2, r.Y+1+i, cmd.usage, ui.Accent, bg, true)
+			c.Text(r.X+2+22, r.Y+1+i, ui.Truncate(cmd.desc, w-26, "…"), ui.Dim, bg, false)
+			s.add(ui.R(r.X+1, r.Y+1+i, w-2, 1), id)
+		}
+	}
+}
+
+// ---- footer ----
+
+func (m Model) hints() string {
+	switch {
+	case m.composing && strings.HasPrefix(m.composer, "/"):
+		return "Enter run · Tab complete · ↑↓ choose · // sends a literal slash · Esc close"
+	case m.composing:
+		return "Enter send · / commands · Ctrl+J newline · Ctrl+U clear · Esc stop typing"
+	case m.searching:
+		return "Type to filter · ↑↓ select · Enter open · Esc clear"
+	case m.active == chatScreen:
+		return "i type · / commands · a files · Enter versions · e archive · Tab chats · Esc back"
+	}
+	return "↑↓ select · Enter open · / commands · n new chat · Ctrl+F search · e archive · s settings · ? help · q quit"
+}
+
+func (s *scene) footer(r ui.Rect) {
+	m, c := s.m, s.c
+	right := "● Offline"
+	rfg := ui.Dim
+	switch {
+	case m.demo:
+		right, rfg = "DEMO · no network", ui.Accent
+	case m.connection.Online:
+		right, rfg = "● Connected", ui.Accent
+	case m.connection.Status != "" && m.connection.Status != "Offline":
+		right, rfg = "◌ "+m.connection.Status, ui.Dim
+	}
+	c.Fill(r, ui.BG)
+	rw := ui.StringWidth(right)
+	c.Text(r.Right()-rw-1, r.Y, right, rfg, ui.BG, true)
+	left, lfg := m.hints(), ui.Faint
 	if m.notice != "" {
-		footer = ui.Muted(ansi.Truncate(ui.SingleLine(m.notice), m.width-4, "…"))
+		left, lfg = m.notice, ui.Accent
+		if m.noticeErr {
+			lfg = ui.Danger
+		}
+	} else if m.connection.Error != "" {
+		left, lfg = m.connection.Error, ui.Danger
 	}
-	return ui.Frame(body+"\n"+footer, m.width, m.height, true)
+	c.Text(r.X+1, r.Y, ui.Truncate(ui.SingleLine(left), max(1, r.W-rw-4), "…"), lfg, ui.BG, false)
 }

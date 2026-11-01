@@ -2,9 +2,9 @@
 
 ## Verification status
 
-During the neon-workspace implementation, **`go test ./...`, `go vet ./...`, `go test -race ./...`, and `go build ./cmd/whats-cli` passed**, along with eight installer tests. Offline PTY checks exercised demo navigation/composition/local sends and offline welcome/consent/history navigation, clean shutdown, temporary-state cleanup, and absence of device-session credentials. These checks do not establish broad terminal/SSH compatibility or live service behavior.
+Automated checks cover the renderer (every cell filled, no mid-row colour resets, exact widths from 30×10 to 200×60), the three reference screens, mouse hit-testing against the rendered regions, slash commands, the file browser and upload queue, unread/archive logic, settings wiring, folder zipping, avatar host rules, the web-pairing server, and SSH-style PTY sessions (24-bit colour without `COLORTERM`, live resizes, SGR mouse, SIGHUP).
 
-**No live account pairing or real message/file sends have occurred.** No result from synthetic fixtures, a temporary session-store round trip, or an offline UI run demonstrates WhatsApp connectivity, actual account/session compatibility, full history recovery, successful delivery, reconnects, or unlinking.
+**No live account pairing, real sends, real profile-picture downloads, real Meta AI exchange, or real SSH daemon have been exercised.** Synthetic fixtures and an offline PTY cannot establish WhatsApp compatibility, delivery, history completeness or account safety.
 
 ## Toolchain and local checks
 
@@ -32,7 +32,7 @@ Do not start the default live-mode app to test a local UI change: persisted cons
 | Test file | Scope checked |
 | --- | --- |
 | `internal/app/model_test.go` | Acceptance waits for successful save; failed save leaves network gated; pre-consent palette restrictions; Unicode filtering/backspace; composer treats shortcuts as text; stale page rejection; refresh keeps older cursors; nested overlays return correctly; recipient guard and `Ctrl+U`; minimum-size guidance and scrolling |
-| `internal/app/workspace_test.go` | Workspace dimensions from 30×10 to 200×60; synthetic snapshot; filtered navigation; new-chat/Meta AI draft guards; stale-account rejection; shared mouse geometry; local-only demo sends; last-message and revoked-message previews |
+| `internal/app/workspace_test.go`, `size_test.go` | Layout bounds on every screen at many sizes; reference content; no background resets; hover/click/wheel against rendered regions; slash commands; settings; pairing/QR sizing (inline up to 230-byte payloads at 130×42); help button timer; unread/archive; explorer and upload plan; frame-size budget; benchmarks |
 | `internal/messaging/recipients_test.go` | International-number validation; both upstream Meta AI identities; bot-invoke reply normalization; delivered/read/played receipt mapping |
 | `tests/install_test.py` | Paths with spaces, no-overwrite rules, existing-command preservation, failed-build cleanup, symlink/unsupported-OS rejection, successful local rebuild, preservation of previous binary on failed rebuild |
 | `internal/app/runtime_test.go` | Runtime consent gating; fake-client text send/pending/self-echo reconciliation; admitted events drain at shutdown; closed runtime rejects operations; logout gating; incoming storage error becomes visible |

@@ -7,49 +7,66 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
+
+	"golang.org/x/sys/unix"
 
 	"whatscli/internal/privatefs"
 )
 
 const ConsentVersion = 1
 
+// Settings are explicit user choices. Booleans are phrased so that the zero
+// value (a settings file written by an older version) keeps the default.
 type Settings struct {
 	ConsentVersion int  `json:"consent_version"`
 	Mouse          bool `json:"mouse"`
 	ReducedMotion  bool `json:"reduced_motion"`
+	HidePhotos     bool `json:"hide_photos"`
+	HideWallpaper  bool `json:"hide_wallpaper"`
+	Clock12h       bool `json:"clock_12h"`
+	Bell           bool `json:"bell"`
 }
 
-func (s Settings) Accepted() bool { return s.ConsentVersion == ConsentVersion }
+func (s Settings) Accepted() bool  { return s.ConsentVersion == ConsentVersion }
+func (s Settings) Photos() bool    { return !s.HidePhotos }
+func (s Settings) Wallpaper() bool { return !s.HideWallpaper }
 
-func Load(path string) (Settings, error) {
-	var settings Settings
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return settings, nil
-	}
+// UIState is non-secret presentation state kept beside settings: read marks
+// (for unread badges) and archived chats, both keyed by "account|chat".
+type UIState struct {
+	Read     map[string]time.Time `json:"read,omitempty"`
+	Archived map[string]bool      `json:"archived,omitempty"`
+}
+
+// readJSON opens without following symlinks and validates the descriptor, so a
+// path swapped between inspection and open cannot redirect the read.
+func readJSON(path string, v any) error {
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return settings, fmt.Errorf("inspect settings: %w", err)
+		if errors.Is(err, unix.ENOENT) {
+			return os.ErrNotExist
+		}
+		return fmt.Errorf("open state file: %w", err)
 	}
-	if !info.Mode().IsRegular() {
-		return settings, errors.New("settings must be a regular file")
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return settings, err
-	}
+	file := os.NewFile(uintptr(fd), path)
 	defer file.Close()
-	decoder := json.NewDecoder(io.LimitReader(file, 65537))
-	if err := decoder.Decode(&settings); err != nil {
-		return Settings{}, fmt.Errorf("read settings: %w", err)
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return errors.New("settings must be a regular file")
+	}
+	decoder := json.NewDecoder(io.LimitReader(file, 1<<20+1))
+	if err := decoder.Decode(v); err != nil {
+		return fmt.Errorf("read state file: %w", err)
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		return Settings{}, errors.New("settings contains trailing or oversized data")
+		return errors.New("state file contains trailing or oversized data")
 	}
-	return settings, nil
+	return nil
 }
 
-func Save(path string, settings Settings) error {
+func writeJSON(path string, v any) error {
 	if err := privatefs.EnsureDir(filepath.Dir(path)); err != nil {
 		return err
 	}
@@ -58,7 +75,7 @@ func Save(path string, settings Settings) error {
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	data, err := json.MarshalIndent(settings, "", "  ")
+	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -80,3 +97,31 @@ func Save(path string, settings Settings) error {
 	}
 	return os.Rename(file.Name(), path)
 }
+
+func Load(path string) (Settings, error) {
+	var settings Settings
+	err := readJSON(path, &settings)
+	if errors.Is(err, os.ErrNotExist) {
+		return Settings{}, nil
+	}
+	if err != nil {
+		return Settings{}, err
+	}
+	return settings, nil
+}
+
+func Save(path string, settings Settings) error { return writeJSON(path, settings) }
+
+func LoadState(path string) (UIState, error) {
+	var state UIState
+	err := readJSON(path, &state)
+	if errors.Is(err, os.ErrNotExist) {
+		return UIState{}, nil
+	}
+	if err != nil {
+		return UIState{}, err
+	}
+	return state, nil
+}
+
+func SaveState(path string, state UIState) error { return writeJSON(path, state) }

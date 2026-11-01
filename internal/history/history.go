@@ -34,7 +34,15 @@ type Conversation struct {
 	ID        string
 	Title     string
 	UpdatedAt time.Time
-	LastBody  string
+	// Latest-message preview fields, filled by Conversations.
+	LastBody, LastSender, LastStatus string
+	LastFromMe                       bool
+}
+
+// Stamp is the time of one incoming message, used for unread counts.
+type Stamp struct {
+	ChatID string
+	At     time.Time
 }
 
 type Message struct {
