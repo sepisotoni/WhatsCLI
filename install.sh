@@ -84,6 +84,14 @@ update() {
     esac
     [ -z "$(git -C "$directory" status --porcelain)" ] || fail "Checkout has local changes; preserve or commit them before updating."
     resolve_ref
+    if [ "$ref" != main ] && [ -x "$directory/bin/whatscli" ]; then
+        target_version=${ref#v}
+        installed_version=$("$directory/bin/whatscli" -version 2>/dev/null | sed -n 's/^WhatsCLI //p')
+        if [ "$installed_version" = "$target_version" ]; then
+            step "Already up to date (WhatsCLI $target_version); existing files were left unchanged."
+            return 0
+        fi
+    fi
     step "Checking out WhatsCLI $ref"
     if [ "$ref" = main ]; then
         git -C "$directory" fetch origin main || fail "Could not fetch main; the installed executable was not replaced."

@@ -79,7 +79,9 @@ func TestWelcomeMatchesReferenceAndOpensAgreement(t *testing.T) {
 func TestWelcomeMouseButtonsRemainInteractive(t *testing.T) {
 	m := New(nil)
 	m.width, m.height = 100, 30
-	m.settings.Mouse = true
+	if !m.settings.Mouse {
+		t.Fatal("mouse input should be enabled for first-run onboarding")
+	}
 	var proceed *hit
 	s := &scene{m: &m}
 	m.draw(s)
@@ -101,6 +103,25 @@ func TestWelcomeMouseButtonsRemainInteractive(t *testing.T) {
 	m = next.(Model)
 	if m.active != consentScreen {
 		t.Fatal("clicking Continue did not open agreement")
+	}
+}
+
+func TestWelcomeSupportsArrowAndSpaceNavigation(t *testing.T) {
+	m := New(nil)
+	m.width, m.height = 100, 30
+	m, _ = press(m, tea.KeyMsg{Type: tea.KeySpace})
+	if m.active != consentScreen {
+		t.Fatal("Space did not activate the focused Continue button")
+	}
+
+	m = New(nil)
+	m, _ = press(m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.welcomeFocus != 0 {
+		t.Fatal("Down arrow did not move focus to Exit")
+	}
+	m, cmd := press(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil || m.active != welcomeScreen {
+		t.Fatal("Enter did not activate the focused Exit button")
 	}
 }
 

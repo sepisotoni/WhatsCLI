@@ -212,7 +212,8 @@ var commands = []string{"conversations", "new chat", "statuses", "files", "meta 
 func New(repo history.Repository) Model {
 	return Model{
 		repo: repo, ctx: context.Background(), account: "local", width: 80, height: 24, active: welcomeScreen,
-		unread: map[string]int{}, avatars: map[string]*avatarEntry{},
+		settings: config.Settings{Mouse: true, MouseConfigured: true},
+		unread:   map[string]int{}, avatars: map[string]*avatarEntry{},
 		state:        config.UIState{Read: map[string]time.Time{}, Archived: map[string]bool{}},
 		welcomeFocus: 1, helpDelay: 2 * time.Minute, now: time.Now(),
 	}

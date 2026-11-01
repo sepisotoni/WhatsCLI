@@ -164,7 +164,12 @@ func Run(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.CommandContext(ctx, "sh", script, "--update")
+	args := []string{"--update"}
+	if strings.Contains(BuildVersion, "-beta.") {
+		args = append(args, "--beta")
+	}
+	commandArgs := append([]string{script}, args...)
+	cmd := exec.CommandContext(ctx, "sh", commandArgs...)
 	for _, entry := range os.Environ() {
 		if !strings.HasPrefix(entry, "WHATSCLI_DIR=") && !strings.HasPrefix(entry, "WHATSCLI_REF=") {
 			cmd.Env = append(cmd.Env, entry)

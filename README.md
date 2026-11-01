@@ -27,7 +27,7 @@ whatscli -demo       # synthetic chats, disposable state, never touches WhatsApp
 whatscli             # live: consent screen, then the linked-device QR
 ```
 
-Update an installed checkout by rerunning the stable install command above, using `/update` (or **Check for updates** in Settings), or running `sh ~/whatscli/install.sh --update`. In-app checks target stable releases only. To update to the latest beta from a terminal, rerun the installer with `--beta` (or use `sh ~/whatscli/install.sh --beta --update`). Updates require a clean checkout with the expected GitHub origin; the installer checks out the selected release and replaces the binary only after a successful build. Updating does not skip or alter the usual welcome, agreement, or device-pairing flow. The root `VERSION` file is the next stable version; pushing `vX.Y.Z-beta.N` publishes a GitHub prerelease, while pushing the matching `vX.Y.Z` tag publishes a stable release.
+Run `whatscli version` to see the installed version and `whatscli update` to update it. Beta builds continue following the beta channel; stable builds follow stable releases. The installer skips checkout and rebuilding when that exact version is already installed. You can also use `/update` (or **Check for updates** in Settings), rerun the stable install command above, or run `sh ~/whatscli/install.sh --beta --update` to explicitly switch to the latest beta. Updates require a clean checkout with the expected GitHub origin and replace the binary only after a successful build. Updating does not skip or alter the usual welcome, agreement, or device-pairing flow. The root `VERSION` file is the next stable version; pushing `vX.Y.Z-beta.N` publishes a GitHub prerelease, while pushing the matching `vX.Y.Z` tag publishes a stable release.
 
 ## The interface
 
@@ -46,10 +46,11 @@ Every launch begins at **Welcome**, then continues through the agreement to **Li
 
 ## Keyboard and mouse
 
-Everything works without a mouse. Mouse support is optional (Settings): hover highlights, click chats/buttons/messages, double-click a message for its versions, and wheel scrolling.
+Everything works without a mouse. Mouse input is enabled by default for onboarding (including existing installs); it can be disabled in Settings. Hover highlights, click chats/buttons/messages, double-click a message for its versions, and wheel scrolling.
 
 | Context | Keys |
 | --- | --- |
+| Welcome | `↑`/`↓`/`←`/`→` or `Tab` choose · `Enter`/`Space` select · `q` quit |
 | Global | `Ctrl+C` quit · `Ctrl+P` palette · `Tab` list ↔ chat · `Ctrl+F` search · `n` new chat · `e` archive · `s` settings · `?` help |
 | Chat | `↑`/`↓` select message · `Ctrl+R` reply · `Ctrl+E` react · `i` type · `a` file browser · `Enter` message versions · `p`/`r` older/latest |
 | Message box | `Enter` send · `Ctrl+J` newline · `Ctrl+U` clear · `Esc` stop typing |

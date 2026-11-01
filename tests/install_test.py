@@ -19,6 +19,7 @@ class InstallerTests(unittest.TestCase):
                         PATH=str(self.tools) + os.pathsep + os.environ["PATH"],
                         WHATSCLI_DIR=str(self.root / "source with spaces"),
                         WHATSCLI_BIN_DIR=str(self.root / "local bin"))
+        self.old_binary = "#!/bin/sh\nprintf 'WhatsCLI %s\\n' \"${INSTALLED_VERSION:-0.3.0}\"\n"
         self.tool("git", """#!/bin/sh
 set -eu
 if [ "${1:-}" = "-C" ]; then
@@ -80,7 +81,8 @@ esac
         (directory / "VERSION").write_text("0.4.0\n")
         (directory / "bin").mkdir()
         binary = directory / "bin/whatscli"
-        binary.write_text("old binary")
+        binary.write_text(self.old_binary)
+        binary.chmod(0o755)
         return directory, binary
 
     def test_fresh_install_with_spaces(self):
@@ -145,11 +147,11 @@ esac
         (checkout / "VERSION").write_text("0.4.0\n")
         (checkout / "bin").mkdir()
         binary = checkout / "bin/whatscli"
-        binary.write_text("old binary")
+        binary.write_text(self.old_binary)
         self.env["FAIL_BUILD"] = "1"
         result = self.run_installer("--local", cwd=checkout)
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(binary.read_text(), "old binary")
+        self.assertEqual(binary.read_text(), self.old_binary)
         self.assertFalse(list((checkout / "bin").glob(".whatscli-build.*")))
 
     def test_local_rebuild(self):
@@ -173,7 +175,7 @@ esac
         self.env["FAKE_ORIGIN"] = "https://example.test/other.git"
         result = self.run_installer("--update")
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(Path(self.env["WHATSCLI_DIR"], "bin/whatscli").read_text(), "old binary")
+        self.assertEqual(Path(self.env["WHATSCLI_DIR"], "bin/whatscli").read_text(), self.old_binary)
 
     def test_update_fetch_or_checkout_failure_preserves_binary(self):
         for variable in ("FAIL_FETCH", "FAIL_CHECKOUT"):
@@ -182,7 +184,7 @@ esac
                 self.env[variable] = "1"
                 result = self.run_installer("--update")
                 self.assertNotEqual(result.returncode, 0)
-                self.assertEqual(Path(self.env["WHATSCLI_DIR"], "bin/whatscli").read_text(), "old binary")
+                self.assertEqual(Path(self.env["WHATSCLI_DIR"], "bin/whatscli").read_text(), self.old_binary)
                 self.env.pop(variable)
 
     def test_update_build_failure_preserves_binary(self):
@@ -190,21 +192,31 @@ esac
         self.env["FAIL_BUILD"] = "1"
         result = self.run_installer("--update")
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(binary.read_text(), "old binary")
+        self.assertEqual(binary.read_text(), self.old_binary)
         self.assertFalse(list((directory / "bin").glob(".whatscli-build.*")))
 
     def test_update_rebuilds_binary_after_fast_forward(self):
         _, binary = self.update_checkout()
         result = self.run_installer("--update")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotEqual(binary.read_text(), "old binary")
+        self.assertNotEqual(binary.read_text(), self.old_binary)
         self.assertTrue(os.access(binary, os.X_OK))
+
+    def test_update_of_same_version_is_noop(self):
+        _, binary = self.update_checkout()
+        original = binary.read_text()
+        self.env["INSTALLED_VERSION"] = "0.4.0"
+        self.env["FAIL_FETCH"] = "1"
+        result = self.run_installer("--update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Already up to date", result.stdout)
+        self.assertEqual(binary.read_text(), original)
 
     def test_curl_style_invocation_updates_existing_install(self):
         _, binary = self.update_checkout()
         result = self.run_installer()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotEqual(binary.read_text(), "old binary")
+        self.assertNotEqual(binary.read_text(), self.old_binary)
         self.assertTrue(os.access(binary, os.X_OK))
 
     def test_beta_flag_selects_latest_prerelease(self):
@@ -212,7 +224,7 @@ esac
         result = self.run_installer("--beta", "--update")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("v0.5.0-beta.1", result.stdout)
-        self.assertNotEqual(binary.read_text(), "old binary")
+        self.assertNotEqual(binary.read_text(), self.old_binary)
 
     def test_invalid_release_ref_is_rejected(self):
         self.update_checkout()
@@ -226,7 +238,7 @@ esac
         self.env["FAIL_RELEASE_LOOKUP"] = "1"
         result = self.run_installer("--update")
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(binary.read_text(), "old binary")
+        self.assertEqual(binary.read_text(), self.old_binary)
 
 
 if __name__ == "__main__":

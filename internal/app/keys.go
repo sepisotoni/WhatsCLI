@@ -131,9 +131,9 @@ func (m *Model) key(key tea.KeyMsg) tea.Cmd {
 	switch m.active {
 	case welcomeScreen:
 		switch k {
-		case "tab", "left", "right", "shift+tab":
+		case "tab", "left", "right", "up", "down", "shift+tab":
 			m.welcomeFocus = 1 - m.welcomeFocus
-		case "enter":
+		case "enter", " ":
 			if m.welcomeFocus == 0 {
 				return tea.Quit
 			}
@@ -719,6 +719,7 @@ func (m *Model) activateSetting(i int) tea.Cmd {
 	switch i {
 	case 0:
 		settings.Mouse = !settings.Mouse
+		settings.MouseConfigured = true
 	case 1:
 		settings.ReducedMotion = !settings.ReducedMotion
 	case 2:

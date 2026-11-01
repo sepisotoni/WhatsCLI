@@ -16,16 +16,17 @@ import (
 
 const ConsentVersion = 1
 
-// Settings are explicit user choices. Booleans are phrased so that the zero
-// value (a settings file written by an older version) keeps the default.
+// Settings are explicit user choices. MouseConfigured distinguishes an opt-out
+// from older settings files that persisted the former disabled default.
 type Settings struct {
-	ConsentVersion int  `json:"consent_version"`
-	Mouse          bool `json:"mouse"`
-	ReducedMotion  bool `json:"reduced_motion"`
-	HidePhotos     bool `json:"hide_photos"`
-	HideWallpaper  bool `json:"hide_wallpaper"`
-	Clock12h       bool `json:"clock_12h"`
-	Bell           bool `json:"bell"`
+	ConsentVersion  int  `json:"consent_version"`
+	Mouse           bool `json:"mouse"`
+	MouseConfigured bool `json:"mouse_configured,omitempty"`
+	ReducedMotion   bool `json:"reduced_motion"`
+	HidePhotos      bool `json:"hide_photos"`
+	HideWallpaper   bool `json:"hide_wallpaper"`
+	Clock12h        bool `json:"clock_12h"`
+	Bell            bool `json:"bell"`
 }
 
 func (s Settings) Accepted() bool  { return s.ConsentVersion == ConsentVersion }
@@ -102,15 +103,22 @@ func Load(path string) (Settings, error) {
 	var settings Settings
 	err := readJSON(path, &settings)
 	if errors.Is(err, os.ErrNotExist) {
-		return Settings{}, nil
+		return Settings{Mouse: true, MouseConfigured: true}, nil
 	}
 	if err != nil {
 		return Settings{}, err
 	}
+	if !settings.MouseConfigured {
+		settings.Mouse = true
+		settings.MouseConfigured = true
+	}
 	return settings, nil
 }
 
-func Save(path string, settings Settings) error { return writeJSON(path, settings) }
+func Save(path string, settings Settings) error {
+	settings.MouseConfigured = true
+	return writeJSON(path, settings)
+}
 
 func LoadState(path string) (UIState, error) {
 	var state UIState

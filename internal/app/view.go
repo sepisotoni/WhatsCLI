@@ -210,7 +210,7 @@ func (s *scene) welcome() {
 		c.Text(cx-ui.StringWidth(sub)/2, subY, ui.Truncate(sub, card.W-8, "…"), ui.Dim, ui.Panel, false)
 	}
 
-	gap, buttonW := 4, min(22, (card.W-12)/2)
+	gap, buttonW := 4, min(24, (card.W-12)/2)
 	if compact {
 		gap, buttonW = 2, (card.W-6)/2
 	}
@@ -223,8 +223,9 @@ func (s *scene) welcome() {
 		continueLabel = "Continue"
 	}
 	s.primary(right, continueLabel, "welcome:start", true)
+	c.Box(right, ui.Accent, ui.Color(0))
 	if !compact {
-		hint := "Enter · continue    Tab · choose    q · quit"
+		hint := "Enter/Space · select    ↑↓/Tab · choose    q · quit"
 		c.Text(cx-ui.StringWidth(hint)/2, card.Bottom()-2, ui.Truncate(hint, card.W-6, "…"), ui.Faint, ui.Panel, false)
 	}
 }

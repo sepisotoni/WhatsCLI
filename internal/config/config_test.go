@@ -52,12 +52,20 @@ func TestSettingsRejectSymlinkAndTrailingJSON(t *testing.T) {
 
 func TestOldSettingsKeepNewDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	if err := os.WriteFile(path, []byte(`{"consent_version":1,"mouse":true}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"consent_version":1,"mouse":false}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	s, err := Load(path)
-	if err != nil || !s.Accepted() || !s.Photos() || !s.Wallpaper() || s.ReducedMotion || s.Bell {
+	if err != nil || !s.Accepted() || !s.Mouse || !s.MouseConfigured || !s.Photos() || !s.Wallpaper() || s.ReducedMotion || s.Bell {
 		t.Fatalf("unexpected defaults: %+v %v", s, err)
+	}
+	s.Mouse = false
+	if err := Save(path, s); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Load(path)
+	if err != nil || s.Mouse {
+		t.Fatalf("explicit mouse opt-out did not persist: %+v %v", s, err)
 	}
 }
 

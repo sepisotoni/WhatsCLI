@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"whatscli/internal/app"
@@ -29,6 +30,24 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "version":
+			fmt.Println("WhatsCLI " + updater.BuildVersion)
+			return nil
+		case "update":
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			output, err := updater.Run(ctx)
+			if err != nil {
+				return err
+			}
+			if output != "" {
+				fmt.Println(output)
+			}
+			return nil
+		}
+	}
 	defaultDB, err := defaultDatabasePath()
 	if err != nil {
 		return err
