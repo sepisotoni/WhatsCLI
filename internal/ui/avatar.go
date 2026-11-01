@@ -12,13 +12,13 @@ import (
 
 const (
 	AvatarW = 8 // cells
-	AvatarH = 3 // cells (8x6 half-block pixels, approximately square)
+	AvatarH = 4 // cells (8x8 half-block pixels, approximately square)
 )
 
-// Photo is a profile picture reduced to 8x6 half-block pixels.
-type Photo struct{ px [6][8]Color }
+// Photo is a profile picture reduced to 8x8 half-block pixels.
+type Photo struct{ px [8][8]Color }
 
-func PhotoFromColors(px [6][8]Color) *Photo { return &Photo{px} }
+func PhotoFromColors(px [8][8]Color) *Photo { return &Photo{px} }
 
 // DecodePhoto center-crops and box-averages an image. Size is checked first so a
 // hostile image cannot cause a decompression bomb.
@@ -38,10 +38,10 @@ func DecodePhoto(data []byte) (*Photo, error) {
 	side := min(b.Dx(), b.Dy())
 	x0, y0 := b.Min.X+(b.Dx()-side)/2, b.Min.Y+(b.Dy()-side)/2
 	p := &Photo{}
-	for py := 0; py < 6; py++ {
+	for py := 0; py < 8; py++ {
 		for pxl := 0; pxl < 8; pxl++ {
 			sx0, sx1 := x0+pxl*side/8, x0+(pxl+1)*side/8
-			sy0, sy1 := y0+py*side/6, y0+(py+1)*side/6
+			sy0, sy1 := y0+py*side/8, y0+(py+1)*side/8
 			var r, g, bl, n uint32
 			step := max(1, (sx1-sx0)/8)
 			for y := sy0; y < max(sy1, sy0+1); y += step {
@@ -83,8 +83,8 @@ func Initials(name string) string {
 }
 
 func inCircle(x, y int) bool {
-	dx, dy := float64(x)+.5-4, float64(y)+.5-3
-	return dx*dx/16+dy*dy/9 <= 1.05
+	dx, dy := float64(x)+.5-4, float64(y)+.5-4
+	return dx*dx/16+dy*dy/16 <= 1.05
 }
 
 // DrawAvatar draws a round avatar: the photo when present, otherwise a tinted
@@ -119,6 +119,38 @@ func DrawAvatar(c *Canvas, x, y int, name string, photo *Photo, bg Color) {
 				c.Put(x+col, y+row, '▀', pixel(col, 2*row), bg, false)
 			case bottom:
 				c.Put(x+col, y+row, '▄', pixel(col, 2*row+1), bg, false)
+			default:
+				c.Put(x+col, y+row, ' ', 0, bg, false)
+			}
+		}
+	}
+}
+
+// DrawGroupAvatar uses a compact group silhouette instead of initials.
+func DrawGroupAvatar(c *Canvas, x, y int, bg Color) {
+	if c == nil {
+		return
+	}
+	fill := Hex(0x07583B)
+	DrawCircle(c, x, y, fill, bg)
+	c.Text(x+1, y+1, "● ● ●", Accent, fill, true)
+	c.Text(x+1, y+2, "∩ ∩ ∩", Accent, fill, true)
+}
+
+func DrawCircle(c *Canvas, x, y int, fill, bg Color) {
+	if c == nil {
+		return
+	}
+	for row := 0; row < AvatarH; row++ {
+		for col := 0; col < AvatarW; col++ {
+			top, bottom := inCircle(col, 2*row), inCircle(col, 2*row+1)
+			switch {
+			case top && bottom:
+				c.Put(x+col, y+row, ' ', fill, fill, false)
+			case top:
+				c.Put(x+col, y+row, '▀', fill, bg, false)
+			case bottom:
+				c.Put(x+col, y+row, '▄', fill, bg, false)
 			default:
 				c.Put(x+col, y+row, ' ', 0, bg, false)
 			}

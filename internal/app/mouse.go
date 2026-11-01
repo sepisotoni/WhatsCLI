@@ -153,6 +153,13 @@ func (m *Model) activate(id string, double bool) tea.Cmd {
 	case "rail:new":
 		m.composing, m.newChat = false, ""
 		m.openOverlay(newChatScreen)
+	case "rail:compose":
+		m.composing, m.newChat = false, ""
+		m.openOverlay(newChatScreen)
+	case "rail:statuses":
+		return m.runCommand("statuses")
+	case "rail:files":
+		return m.openExplorer()
 	case "rail:settings":
 		m.composing = false
 		m.openOverlay(settingsScreen)
