@@ -125,6 +125,78 @@ func TestWelcomeSupportsArrowAndSpaceNavigation(t *testing.T) {
 	}
 }
 
+func TestPairingBackReturnsToConsentAndUnpairedWorkspaceStaysHidden(t *testing.T) {
+	m := New(nil)
+	m.active = pairingScreen
+	m.settings.ConsentVersion = config.ConsentVersion
+	if !strings.Contains(plain(m), "STEP 02 / 02") {
+		t.Fatalf("pairing screen does not show step 2 of 2:\n%s", plain(m))
+	}
+	m, _ = press(m, runeKey("i"))
+	if m.active != pairingScreen {
+		t.Fatal("unpaired keyboard shortcut opened the WhatsCLI workspace")
+	}
+	var back *hit
+	s := &scene{m: &m}
+	m.draw(s)
+	for i := range s.hits {
+		if s.hits[i].id == "pair:back" {
+			back = &s.hits[i]
+			break
+		}
+	}
+	if back == nil {
+		t.Fatal("pairing screen is missing its Back button")
+	}
+	next, _ := m.Update(tea.MouseMsg{
+		X:      back.r.X + back.r.W/2,
+		Y:      back.r.Y + back.r.H/2,
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+	})
+	m = next.(Model)
+	if m.active != consentScreen {
+		t.Fatal("pairing Back did not return to agreement")
+	}
+}
+
+func TestConsentScrollbarCanBeDragged(t *testing.T) {
+	m := New(nil)
+	m.active, m.width, m.height = consentScreen, 60, 16
+	s := &scene{m: &m}
+	m.draw(s)
+	var bar *hit
+	for i := range s.hits {
+		if s.hits[i].id == "consent:scrollbar" {
+			bar = &s.hits[i]
+			break
+		}
+	}
+	if bar == nil {
+		t.Fatal("short agreement screen is missing its scrollbar")
+	}
+	next, _ := m.Update(tea.MouseMsg{
+		X:      bar.r.X + bar.r.W/2,
+		Y:      bar.r.Bottom() - 1,
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+	})
+	m = next.(Model)
+	if m.scroll == 0 || !m.consentDragging {
+		t.Fatal("scrollbar press did not begin dragging")
+	}
+	next, _ = m.Update(tea.MouseMsg{Y: bar.r.Y, Action: tea.MouseActionMotion})
+	m = next.(Model)
+	if m.scroll != 0 {
+		t.Fatal("dragging scrollbar to the top did not reset scroll")
+	}
+	next, _ = m.Update(tea.MouseMsg{Action: tea.MouseActionRelease})
+	m = next.(Model)
+	if m.consentDragging {
+		t.Fatal("scrollbar drag did not stop on release")
+	}
+}
+
 func TestReturningUserFollowsWelcomeAgreementPairingFlow(t *testing.T) {
 	r, client := testRuntime(t, true)
 	m := NewWithRuntime(r, config.Settings{ConsentVersion: config.ConsentVersion}, "")
@@ -232,9 +304,13 @@ func TestComposerDoesNotTreatTextAsShortcuts(t *testing.T) {
 	if m.composer != "q/s" {
 		t.Fatal("emoji deletion failed")
 	}
-	_, cmd := press(m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	m, cmd := press(m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd != nil || m.notice == "" {
+		t.Fatal("first Ctrl+C must request confirmation rather than quit")
+	}
+	_, cmd = press(m, tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd == nil {
-		t.Fatal("Ctrl+C must quit")
+		t.Fatal("second Ctrl+C must quit")
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Fatal("not a quit command")

@@ -29,7 +29,7 @@ func (s *scene) is(id string) bool { return s.m.hover == id }
 
 func (m Model) View() string {
 	if m.width < 30 || m.height < 10 {
-		return "WhatsCLI\nEnlarge terminal to at least 30×10.\nCtrl+C quits."
+		return "WhatsCLI\nEnlarge terminal to at least 30×10.\nPress Ctrl+C twice to quit."
 	}
 	c := ui.NewCanvas(m.width, m.height, ui.BG)
 	s := &scene{c: c, m: &m}
@@ -166,7 +166,6 @@ func (s *scene) welcome() {
 		cardH = H - 2
 	}
 	card := ui.R((W-cardW)/2, (H-cardH)/2, cardW, cardH)
-	c.Box(ui.R(card.X-1, card.Y-1, card.W+2, card.H+2), ui.Mix(ui.Accent, ui.Panel, .65), ui.BG)
 	c.Box(card, ui.BorderHi, ui.Panel)
 
 	micro := card.H < 11
@@ -222,8 +221,7 @@ func (s *scene) welcome() {
 	if compact {
 		continueLabel = "Continue"
 	}
-	s.primary(right, continueLabel, "welcome:start", true)
-	c.Box(right, ui.Accent, ui.Color(0))
+	s.outline(right, continueLabel, "welcome:start", m.welcomeFocus == 1)
 	if !compact {
 		hint := "Enter/Space · select    ↑↓/Tab · choose    q · quit"
 		c.Text(cx-ui.StringWidth(hint)/2, card.Bottom()-2, ui.Truncate(hint, card.W-6, "…"), ui.Faint, ui.Panel, false)
@@ -278,6 +276,8 @@ func (s *scene) consent() {
 	var bottom int
 	if roomy {
 		bottom = 11
+	} else if ph < 12 {
+		bottom = 2
 	} else {
 		bottom = 4
 	}
@@ -303,11 +303,19 @@ func (s *scene) consent() {
 		}
 	}
 	c.Restore(restore)
-	if maxScroll > off {
-		c.Text(ix+iw-1, view.Bottom()-1, "▼", ui.Accent, ui.Panel, true)
-	}
-	if off > 0 {
-		c.Text(ix+iw-1, view.Y, "▲", ui.Accent, ui.Panel, true)
+	if maxScroll > 0 && view.H > 0 {
+		trackX := view.Right() - 1
+		thumbH := max(1, view.H*view.H/content)
+		thumbH = min(view.H, thumbH)
+		thumbY := view.Y + (view.H-thumbH)*off/maxScroll
+		for row := view.Y; row < view.Bottom(); row++ {
+			glyph, fg := '│', ui.Border
+			if row >= thumbY && row < thumbY+thumbH {
+				glyph, fg = '█', ui.Accent
+			}
+			c.Put(trackX, row, glyph, fg, ui.Panel, false)
+		}
+		s.add(ui.R(trackX-1, view.Y, 3, view.H), "consent:scrollbar")
 	}
 	by := py + ph - 2
 	boxY := by
@@ -483,7 +491,9 @@ func (s *scene) pairLeft(content ui.Rect, lw int) {
 	c.Text(x+3, y+1, "∞", ui.Accent, ui.PanelHi, true)
 	c.Text(x+9, y, "LINK", ui.Text, ui.Panel, true)
 	c.Text(x+14, y, "A DEVICE", ui.Accent, ui.Panel, true)
+	step := "STEP 02 / 02"
 	c.Text(x+9, y+1, "Log in to WhatsApp", ui.Dim, ui.Panel, false)
+	c.Text(x, y+3, step, ui.Accent, ui.Panel, true)
 	steps := []string{
 		"On your phone, open WhatsApp.",
 		"Go to Settings or ⋮ → Linked devices.",

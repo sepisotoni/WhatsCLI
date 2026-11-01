@@ -173,6 +173,8 @@ type Model struct {
 	notice                             string
 	noticeErr                          bool
 	scroll                             int
+	consentDragging                    bool
+	ctrlCAt                            time.Time
 	fullscreen                         bool
 	search, newChat, hover             string
 	searching, demo                    bool
@@ -559,7 +561,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.composer, m.composing = "", false
 			m.trail = nil
 			m.unread = map[string]int{}
-			if m.active != pairingScreen {
+			if m.connection.Online && m.active != pairingScreen {
 				m.active = inboxScreen
 			}
 		}
@@ -571,6 +573,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fullscreen = false
 		}
 		m.trackPairing()
+		if !m.connection.Online {
+			return m, m.wait()
+		}
 		return m, tea.Batch(m.wait(), m.loadChats(m.chatBefore), m.loadMessages(m.messageBefore), m.loadUnread(), m.fetchAvatars(4), m.loadStatuses())
 	case operationMsg:
 		if msg.err != nil {
@@ -605,7 +610,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.runtime.AllowConnection()
 			}
 			m.active = pairingScreen
-			return m, tea.Batch(mouse, m.connect(), m.loadChats(nil))
+			if m.runtime != nil && m.runtime.Snapshot().Online {
+				return m, tea.Batch(mouse, func() tea.Msg { return refreshMsg{} })
+			}
+			return m, tea.Batch(mouse, m.connect())
 		}
 		return m, tea.Batch(mouse, m.fetchAvatars(4))
 	case avatarMsg:

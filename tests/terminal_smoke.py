@@ -80,7 +80,7 @@ class Session:
         if how == "hangup":
             os.kill(self.proc.pid, signal.SIGHUP)
         else:
-            self.send(b"\x03")
+            self.send(b"\x03\x03")
         deadline = time.monotonic() + 10
         while self.proc.poll() is None and time.monotonic() < deadline:
             self.pump(0.1)
@@ -161,7 +161,8 @@ def offline_flow(binary):
     s.send(b"\r")
     s.expect("Log in to WhatsApp")
     s.send(b"\x1b")
-    s.expect("No chats here yet")
+    s.expect("Disclaimer")
+    assert b"No chats here yet" not in s.captured, "unpaired WhatsCLI workspace was rendered"
     s.finish()
     print("PASS offline onboarding (welcome, consent, link a device)")
 

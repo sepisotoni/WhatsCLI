@@ -20,11 +20,15 @@ func isText(key tea.KeyMsg) bool { return key.Type == tea.KeyRunes || key.Type =
 func (m *Model) key(key tea.KeyMsg) tea.Cmd {
 	k := key.String()
 	if k == "ctrl+c" {
-		if m.sendCancel != nil {
-			m.sendCancel()
+		if !m.ctrlCAt.IsZero() && time.Since(m.ctrlCAt) <= 3*time.Second {
+			m.ctrlCAt = time.Time{}
+			return tea.Quit
 		}
-		return tea.Quit
+		m.ctrlCAt = time.Now()
+		m.setNotice("Press Ctrl+C again within 3 seconds to quit.", false)
+		return nil
 	}
+	m.ctrlCAt = time.Time{}
 	if k == "ctrl+x" && m.sendCancel != nil {
 		m.sendCancel()
 		m.setNotice("Cancelling send; delivery may be uncertain.", false)
@@ -122,8 +126,8 @@ func (m *Model) key(key tea.KeyMsg) tea.Cmd {
 		case pairingScreen:
 			if m.fullscreen {
 				m.fullscreen = false
-			} else if m.settings.Accepted() {
-				m.active = inboxScreen
+			} else {
+				m.active, m.scroll = consentScreen, 0
 			}
 		}
 		return nil
@@ -158,10 +162,8 @@ func (m *Model) key(key tea.KeyMsg) tea.Cmd {
 			return m.connect()
 		case "f":
 			m.fullscreen = !m.fullscreen
-		case "i", "b":
-			if m.settings.Accepted() {
-				m.active = inboxScreen
-			}
+		case "b":
+			m.active, m.fullscreen, m.scroll = consentScreen, false, 0
 		case "h":
 			return m.startWeb()
 		}

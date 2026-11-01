@@ -10,6 +10,16 @@ import (
 )
 
 func (m *Model) mouse(msg tea.MouseMsg) tea.Cmd {
+	if m.consentDragging {
+		if msg.Action == tea.MouseActionRelease {
+			m.consentDragging = false
+			return nil
+		}
+		if msg.Action == tea.MouseActionMotion {
+			m.scrollConsentTo(msg.Y)
+			return nil
+		}
+	}
 	// Terminals report motion for every pixel-step; only a new cell can change
 	// what is hovered, so skip the hit test otherwise.
 	if msg.Action == tea.MouseActionMotion && msg.X == m.lastMouseX && msg.Y == m.lastMouseY && m.hover != "" {
@@ -60,6 +70,27 @@ func (m *Model) wheel(msg tea.MouseMsg, delta int) tea.Cmd {
 	return nil
 }
 
+func (m *Model) scrollConsentTo(y int) {
+	W, H := m.width, m.height
+	pw, ph := min(W-2, 92), min(H-2, 40)
+	py := (H - ph) / 2
+	iw := pw - 6
+	bottom := 4
+	if ph >= 30 {
+		bottom = 11
+	} else if ph < 12 {
+		bottom = 2
+	}
+	viewY, viewH := py+5, ph-5-bottom
+	content := consentHeight(iw)
+	maxScroll := max(0, content-viewH)
+	if maxScroll == 0 || viewH < 2 {
+		m.scroll = 0
+		return
+	}
+	m.scroll = max(0, min(maxScroll, (y-viewY)*maxScroll/(viewH-1)))
+}
+
 func idNum(id, prefix string) (int, bool) {
 	if !strings.HasPrefix(id, prefix) {
 		return 0, false
@@ -101,7 +132,10 @@ func (m *Model) activate(id string, double bool) tea.Cmd {
 	case "consent:terms":
 		m.setNotice("WhatsApp Terms of Service: "+termsURL, false)
 	case "pair:back":
-		return m.pressKey("esc")
+		m.active, m.fullscreen, m.scroll = consentScreen, false, 0
+	case "consent:scrollbar":
+		m.consentDragging = true
+		m.scrollConsentTo(m.lastMouseY)
 	case "pair:full":
 		m.fullscreen = !m.fullscreen
 	case "pair:help":

@@ -51,7 +51,7 @@ Everything works without a mouse. Mouse input is enabled by default for onboardi
 | Context | Keys |
 | --- | --- |
 | Welcome | `↑`/`↓`/`←`/`→` or `Tab` choose · `Enter`/`Space` select · `q` quit |
-| Global | `Ctrl+C` quit · `Ctrl+P` palette · `Tab` list ↔ chat · `Ctrl+F` search · `n` new chat · `e` archive · `s` settings · `?` help |
+| Global | `Ctrl+C` twice within 3 seconds to quit · `Ctrl+P` palette · `Tab` list ↔ chat · `Ctrl+F` search · `n` new chat · `e` archive · `s` settings · `?` help |
 | Chat | `↑`/`↓` select message · `Ctrl+R` reply · `Ctrl+E` react · `i` type · `a` file browser · `Enter` message versions · `p`/`r` older/latest |
 | Message box | `Enter` send · `Ctrl+J` newline · `Ctrl+U` clear · `Esc` stop typing |
 | Link screen | `f` full screen · `h` web QR · `r` retry · `Esc` back |
