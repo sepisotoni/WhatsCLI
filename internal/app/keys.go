@@ -22,9 +22,11 @@ func (m *Model) key(key tea.KeyMsg) tea.Cmd {
 	if k == "ctrl+c" {
 		if !m.ctrlCAt.IsZero() && time.Since(m.ctrlCAt) <= 3*time.Second {
 			m.ctrlCAt = time.Time{}
+			m.ctrlCNoticeUntil = time.Time{}
 			return tea.Quit
 		}
 		m.ctrlCAt = time.Now()
+		m.ctrlCNoticeUntil = m.ctrlCAt.Add(3 * time.Second)
 		m.setNotice("Press Ctrl+C again within 3 seconds to quit.", false)
 		return nil
 	}

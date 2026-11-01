@@ -128,8 +128,9 @@ type avatarMsg struct {
 	photo *ui.Photo
 }
 type webMsg struct {
-	srv *webpair.Server
-	err error
+	srv     *webpair.Server
+	err     error
+	openErr error
 }
 
 type Model struct {
@@ -175,6 +176,7 @@ type Model struct {
 	scroll                             int
 	consentDragging                    bool
 	ctrlCAt                            time.Time
+	ctrlCNoticeUntil                   time.Time
 	fullscreen                         bool
 	search, newChat, hover             string
 	searching, demo                    bool
@@ -224,7 +226,8 @@ func New(repo history.Repository) Model {
 func NewWithRuntime(runtime *Runtime, settings config.Settings, settingsPath string) Model {
 	m := New(runtime.Repo)
 	m.runtime, m.settings, m.settingsPath, m.ctx = runtime, settings, settingsPath, runtime.ctx
-	m.consentAccepted = settings.Accepted()
+	runtime.RequireConsent()
+	m.consentAccepted = false
 	m.onboardingPending = true
 	return m
 }
@@ -287,7 +290,7 @@ func (m Model) wait() tea.Cmd {
 }
 
 func (m Model) connect() tea.Cmd {
-	if m.runtime == nil || !m.settings.Accepted() || m.demo {
+	if m.runtime == nil || !m.settings.Accepted() || m.onboardingPending || m.demo {
 		return nil
 	}
 	return func() tea.Msg { return operationMsg{m.runtime.Connect()} }
@@ -515,7 +518,10 @@ func (m Model) startWeb() tea.Cmd {
 	runtime, ctx := m.runtime, m.ctx
 	return func() tea.Msg {
 		srv, err := webpair.Start(ctx, func() string { return runtime.Snapshot().QR }, 15*time.Minute)
-		return webMsg{srv, err}
+		if err != nil {
+			return webMsg{err: err}
+		}
+		return webMsg{srv: srv, openErr: openBrowser(srv.URL)}
 	}
 }
 
@@ -527,6 +533,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case pulseMsg:
 		m.now = time.Time(msg)
+		if !m.ctrlCNoticeUntil.IsZero() && !m.now.Before(m.ctrlCNoticeUntil) {
+			if m.notice == "Press Ctrl+C again within 3 seconds to quit." {
+				m.setNotice("", false)
+			}
+			m.ctrlCNoticeUntil = time.Time{}
+		}
 		if !m.settings.ReducedMotion {
 			m.frame = (m.frame + 1) % 10
 		}
@@ -583,12 +595,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case webMsg:
 		if msg.err != nil {
-			m.webNote = "Could not open a local port."
+			m.webNote = msg.err.Error()
 			return m, nil
 		}
 		m.web = msg.srv
 		host, _ := os.Hostname()
-		m.webNote = fmt.Sprintf("%s  ·  over SSH: ssh -L %d:127.0.0.1:%d %s@%s", msg.srv.URL, msg.srv.Port, msg.srv.Port, os.Getenv("USER"), host)
+		m.webNote = msg.srv.URL
+		if msg.openErr == nil {
+			m.webNote += " · opened in browser"
+		} else {
+			m.webNote += " · could not launch browser: " + msg.openErr.Error()
+		}
+		m.webNote += fmt.Sprintf(" · over SSH: ssh -L %d:127.0.0.1:%d %s@%s", msg.srv.Port, msg.srv.Port, os.Getenv("USER"), host)
 	case savedMsg:
 		m.saving = false
 		if msg.err != nil {

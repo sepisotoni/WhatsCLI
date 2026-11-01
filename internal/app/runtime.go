@@ -48,6 +48,7 @@ func NewRuntime(repo history.Repository, client messaging.Client, consent bool) 
 func (r *Runtime) Snapshot() Connection  { r.mu.Lock(); defer r.mu.Unlock(); return r.state }
 func (r *Runtime) Wake() <-chan struct{} { return r.wake }
 func (r *Runtime) AllowConnection()      { r.mu.Lock(); r.consent = true; r.mu.Unlock() }
+func (r *Runtime) RequireConsent()       { r.mu.Lock(); r.consent = false; r.mu.Unlock() }
 func (r *Runtime) notify() {
 	select {
 	case r.wake <- struct{}{}:

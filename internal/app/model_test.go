@@ -207,16 +207,27 @@ func TestReturningUserFollowsWelcomeAgreementPairingFlow(t *testing.T) {
 	if client.connects.Load() != 0 {
 		t.Fatal("runtime connected before the user completed onboarding")
 	}
+	if m.connect() != nil {
+		t.Fatal("connection command was available before fresh agreement acceptance")
+	}
 	for _, command := range m.filteredCommands() {
 		if command == "connect" || command == "conversations" || command == "update" {
 			t.Fatalf("onboarding command available before agreement: %s", command)
 		}
 	}
 	m, _ = press(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.active != consentScreen || !m.consentAccepted {
-		t.Fatal("welcome did not advance to the already-accepted agreement")
+	if m.active != consentScreen || m.consentAccepted {
+		t.Fatal("returning agreement must require a fresh manual acceptance")
 	}
 	m, cmd := press(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil || m.consentAccepted {
+		t.Fatal("agreement continued without a fresh acceptance")
+	}
+	m, _ = press(m, tea.KeyMsg{Type: tea.KeySpace})
+	if !m.consentAccepted {
+		t.Fatal("Space did not manually accept the agreement")
+	}
+	m, cmd = press(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("agreement confirmation did not continue")
 	}
@@ -308,7 +319,15 @@ func TestComposerDoesNotTreatTextAsShortcuts(t *testing.T) {
 	if cmd != nil || m.notice == "" {
 		t.Fatal("first Ctrl+C must request confirmation rather than quit")
 	}
-	_, cmd = press(m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	m.now = time.Now()
+	m.ctrlCNoticeUntil = m.now.Add(time.Second)
+	next, _ := m.Update(pulseMsg(m.ctrlCNoticeUntil))
+	m = next.(Model)
+	if m.notice != "" {
+		t.Fatal("Ctrl+C prompt did not disappear after three seconds")
+	}
+	m.ctrlCAt = time.Now()
+	m, cmd = press(m, tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd == nil {
 		t.Fatal("second Ctrl+C must quit")
 	}
