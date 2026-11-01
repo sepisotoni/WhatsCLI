@@ -1,4 +1,4 @@
-name: Publish stable release
+name: Publish WhatsCLI release
 
 on:
   push:
@@ -37,6 +37,7 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
